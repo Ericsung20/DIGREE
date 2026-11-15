@@ -1,34 +1,40 @@
 """Soft scoring and ranking (pure functions, no I/O).
 
-The three schedule-shape factors are scored. The data-driven factors (grade
-outcomes, degree fit, instructor) need the missing-data rules of Milestone C
-and are refused upstream by the engine.
+Six weighted factors, each a value between 0 and 1:
+
+- walking, idle_gap, campus_days describe the shape of the week;
+- grade_outcomes, degree_fit, instructor come from data the caller supplies.
+
+Nothing here depends on which schedules a search happened to find. Neutral
+values and the decision to compare a factor at all come from the request, so
+a schedule's score is the same whatever the search limits are.
 """
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import median
 
-from app.models import Metrics, Weights
+from app.models import GradeStats, Metrics, Weights
 
 WALKING_SCALE_MIN = 30
 IDLE_GAP_SCALE_MIN = 60
 
-# Weekly walking assumed for a schedule with unknown walks when no schedule in
-# the response is fully known: the amount that scores exactly half.
-FALLBACK_WALKING_MIN = WALKING_SCALE_MIN * math.log(2)
+# Value of a factor that cannot be measured. Used for walking and idle time
+# when some walks are unknown; no number of minutes is ever made up.
+NEUTRAL_COMPONENT = 0.5
 
-SCHEDULE_SHAPE_FACTORS = ("walking", "idle_gap", "campus_days")
-UNIMPLEMENTED_FACTORS = ("grade_outcomes", "degree_fit", "instructor")
+# Score of every schedule when no weighted factor can be compared.
+NOT_COMPARABLE_SCORE = 50.0
 
+# Grade smoothing: observed A/AB rates are pulled toward the prior rate, as
+# if every course came with this many extra grades at that rate. It is an MVP
+# rule from the handoff, not a university statistic.
+GRADE_PRIOR_RATE = 0.5
+GRADE_PRIOR_STRENGTH = 50
 
-@dataclass(frozen=True)
-class UnknownTravel:
-    """What is known about the transitions whose walking time is not."""
-
-    gap_minutes: int  # total time between the classes on either side of them
-    max_walk_minutes: int  # the most walking those gaps and the request's limits allow
+SHAPE_FACTORS = ("walking", "idle_gap", "campus_days")
+DATA_FACTORS = ("grade_outcomes", "degree_fit", "instructor")
 
 
 def walking_component(walking_minutes_weekly: float) -> float:
@@ -45,44 +51,78 @@ def campus_days_component(campus_days: int) -> float:
     return min(1.0, max(0.0, 1 - (campus_days - 1) / 4))
 
 
-def neutral_walking_minutes(complete: Iterable[Metrics]) -> float:
-    """Median weekly walking of the schedules whose travel data is complete."""
-    known = [metrics.walking_minutes_weekly for metrics in complete]
-    return median(known) if known else FALLBACK_WALKING_MIN
+def smoothed_grade_rate(stats: GradeStats | None) -> float | None:
+    """A/AB rate adjusted for sample size, or None when there is nothing to go on."""
+    if stats is None or stats.sample_size == 0:
+        return None
+    n = stats.sample_size
+    return (n * stats.a_ab_rate + GRADE_PRIOR_STRENGTH * GRADE_PRIOR_RATE) / (
+        n + GRADE_PRIOR_STRENGTH
+    )
+
+
+@dataclass(frozen=True)
+class DataFactor:
+    """How one data-driven factor is compared within a request."""
+
+    neutral: float | None  # median of the known values; None when nothing is known
+    discriminating: bool  # False when every schedule is certain to get the same value
+
+    @property
+    def has_data(self) -> bool:
+        return self.neutral is not None
+
+
+def data_factor(known_values: Iterable[float]) -> DataFactor:
+    """Baseline for a factor from the known values of everything selectable.
+
+    With fewer than two distinct known values the factor cannot tell schedules
+    apart: missing values are filled with the median, which is then that same
+    single value.
+    """
+    known = list(known_values)
+    if not known:
+        return DataFactor(neutral=None, discriminating=False)
+    return DataFactor(neutral=median(known), discriminating=len(set(known)) > 1)
+
+
+def filled_mean(values: Sequence[float | None], neutral: float) -> float:
+    """Mean of the values, with the neutral value standing in for missing ones."""
+    return sum(neutral if value is None else value for value in values) / len(values)
 
 
 def schedule_score(
     metrics: Metrics,
     weights: Weights,
-    unknown_travel: UnknownTravel | None = None,
-    neutral_walking: float = FALLBACK_WALKING_MIN,
+    travel_complete: bool = True,
+    data_values: Mapping[str, float] | None = None,
 ) -> float:
-    """Weighted average of the active factors on a 0-100 scale, 2 decimals.
+    """Weighted average of the compared factors on a 0-100 scale, 2 decimals.
 
-    Pass `unknown_travel` for a schedule with walks of unknown length. Its
-    metrics are then subtotals over the known transitions, and scoring them as
-    they stand would treat every unknown walk as free. Instead the schedule is
-    scored as if its total walking were `neutral_walking`, kept within what is
-    possible: no less than the walking already known, and no more than its
-    gaps can hold. The assumed walking comes out of the idle time between the
-    same classes, so both factors describe one consistent, feasible week.
+    `data_values` holds the data-driven factors being compared in this request;
+    one left out is simply not part of the average.
+
+    With `travel_complete=False` the metrics are subtotals over the known
+    transitions only. Walking and idle time then score the neutral 0.5, or
+    less when the known part alone already rules 0.5 out: real totals can only
+    be higher than the subtotals, so the subtotal's own score is a ceiling.
     """
-    walking: float = metrics.walking_minutes_weekly
-    idle_gap: float = metrics.idle_gap_minutes_weekly
-    if unknown_travel is not None:
-        assumed = min(max(neutral_walking - walking, 0), unknown_travel.max_walk_minutes)
-        walking += assumed
-        idle_gap += unknown_travel.gap_minutes - assumed
-    components = {
-        "walking": walking_component(walking),
-        "idle_gap": idle_gap_component(idle_gap),
+    walking = walking_component(metrics.walking_minutes_weekly)
+    idle_gap = idle_gap_component(metrics.idle_gap_minutes_weekly)
+    if not travel_complete:
+        walking = min(walking, NEUTRAL_COMPONENT)
+        idle_gap = min(idle_gap, NEUTRAL_COMPONENT)
+    values = {
+        "walking": walking,
+        "idle_gap": idle_gap,
         "campus_days": campus_days_component(metrics.campus_days),
+        **(data_values or {}),
     }
-    active_weight = sum(getattr(weights, name) for name in SCHEDULE_SHAPE_FACTORS)
-    if active_weight <= 0:
-        raise ValueError("no implemented scoring factor has a positive weight")
-    weighted = sum(getattr(weights, name) * components[name] for name in SCHEDULE_SHAPE_FACTORS)
-    return round(100 * weighted / active_weight, 2)
+    compared = [(getattr(weights, name), value) for name, value in values.items()]
+    total_weight = sum(weight for weight, _ in compared)
+    if total_weight <= 0:
+        return NOT_COMPARABLE_SCORE
+    return round(100 * sum(weight * value for weight, value in compared) / total_weight, 2)
 
 
 def ranking_key(status: str, score: float, selection: Iterable[tuple[str, str, int]]) -> tuple:

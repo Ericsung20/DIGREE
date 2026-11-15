@@ -379,7 +379,7 @@ def test_warnings_follow_code_order_then_request_order():
 
 def test_every_warning_is_a_known_code_followed_by_a_sentence():
     result = run(_every_warning_at_once()).results[0]
-    assert set(codes(result)) == set(messages.WARNING_CODES)
+    assert set(codes(result)) == set(messages.REVIEW_WARNING_CODES)
     for warning in result.warnings:
         assert re.fullmatch(r"[a-z_]+: [A-Z].*\.", warning), warning
 

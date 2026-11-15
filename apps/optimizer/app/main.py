@@ -1,15 +1,20 @@
 """FastAPI entry point: routes and error mapping only. Logic lives in engine.py."""
 
 import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app import CONTRACT_VERSION, engine
+from app.config import load_search_limits
 from app.models import ApiError, ApiErrorBody, GenerateRequest, GenerateResponse, HealthResponse
 
 logger = logging.getLogger("digree.optimizer")
+
+# Read once at startup; an invalid value stops the service instead of being ignored.
+SEARCH_LIMITS = load_search_limits(os.environ)
 
 app = FastAPI(
     title="DIGREE Optimization API",
@@ -38,7 +43,7 @@ def health() -> HealthResponse:
     operation_id="generateSchedules",
 )
 def generate_schedules(request: GenerateRequest) -> GenerateResponse:
-    return engine.generate(request)
+    return engine.generate(request, SEARCH_LIMITS)
 
 
 def _error(status_code: int, code: str, message: str, details: list[str]) -> JSONResponse:
@@ -64,16 +69,6 @@ def handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResp
         path = "body" if error["type"] == "json_invalid" else _field_path(tuple(error["loc"]))
         details.append(f"{path}: {error['msg'].removeprefix('Value error, ')}")
     return _error(422, "validation_error", "Request validation failed.", details)
-
-
-@app.exception_handler(engine.UnsupportedFeatureError)
-def handle_unsupported_feature(_: Request, exc: engine.UnsupportedFeatureError) -> JSONResponse:
-    return _error(
-        503,
-        "not_implemented",
-        "The request needs optimizer behaviour that is not implemented yet.",
-        exc.details,
-    )
 
 
 @app.exception_handler(Exception)

@@ -327,7 +327,7 @@ def test_identical_duplicate_walking_edges_are_accepted(client, fixture_request)
 
 
 # --------------------------------------------------------------------------
-# 503 not_implemented: behaviour deferred to Milestone C
+# Requests that stay close to the fixture
 # --------------------------------------------------------------------------
 
 
@@ -342,47 +342,6 @@ def _optional_course(**overrides) -> dict:
         is_required=False,
         **overrides,
     )
-
-
-UNSUPPORTED_REQUESTS = {
-    "grade_outcomes weight": (
-        lambda r: r["preferences"]["weights"].update(grade_outcomes=0.5),
-        "preferences.weights.grade_outcomes: ",
-    ),
-    "degree_fit weight": (
-        lambda r: r["preferences"]["weights"].update(degree_fit=0.5),
-        "preferences.weights.degree_fit: ",
-    ),
-    "instructor weight": (
-        lambda r: r["preferences"]["weights"].update(instructor=1),
-        "preferences.weights.instructor: ",
-    ),
-    "optional courses needed for credits": (
-        lambda r: r["courses"][2].update(is_required=False),
-        "courses: required courses cannot reach the credit range",
-    ),
-    "no required course at all": (
-        lambda r: (
-            [c.update(is_required=False) for c in r["courses"]],
-            r["constraints"].update(min_credits=0),
-        ),
-        "courses: no course is required",
-    ),
-}
-
-
-@pytest.mark.parametrize("case", UNSUPPORTED_REQUESTS)
-def test_unsupported_request_returns_503_not_implemented(client, fixture_request, case):
-    mutate, expected_detail = UNSUPPORTED_REQUESTS[case]
-    mutate(fixture_request)
-
-    response = client.post(GENERATE, json=fixture_request)
-
-    assert response.status_code == 503
-    body = response.json()
-    assert set(body) == {"error"}
-    assert body["error"]["code"] == "not_implemented"
-    assert any(expected_detail in detail for detail in body["error"]["details"]), body
 
 
 SUPPORTED_VARIATIONS = {
@@ -489,14 +448,14 @@ REVIEW_SCENARIOS = {
         ],
         FIXTURE_DIAGNOSTICS,
     ),
-    # Monday's cs400-A meeting goes online, so only Wednesday's walk is known:
-    # 6 minutes with math234-A, 18 with math234-B.
+    # Monday's cs400-A meeting goes online, so only Wednesday's walk is known.
+    # Both schedules score the neutral half and tie; IDs decide the order.
     "online_sync meeting": (
         lambda r: _first_meeting(r).update(mode="online_sync", building_id=None),
         [
             (BB, 100.0, "ready", []),
-            (AA, 81.87, "needs_review", ["location_uncertain"]),
-            (AB, 54.88, "needs_review", ["location_uncertain"]),
+            (AA, 50.0, "needs_review", ["location_uncertain"]),
+            (AB, 50.0, "needs_review", ["location_uncertain"]),
         ],
         FIXTURE_DIAGNOSTICS,
     ),
@@ -509,19 +468,19 @@ REVIEW_SCENARIOS = {
         lambda r: _first_meeting(r).update(building_id=None),
         [
             (BB, 100.0, "ready", []),
-            (AA, 81.87, "needs_review", ["building_unknown"]),
-            (AB, 54.88, "needs_review", ["building_unknown"]),
+            (AA, 50.0, "needs_review", ["building_unknown"]),
+            (AB, 50.0, "needs_review", ["building_unknown"]),
         ],
         FIXTURE_DIAGNOSTICS,
     ),
-    # Without ALPHA-BETA, cs400-A + math234-A is scored as if it walked the
-    # 14 minutes its two 10-minute gaps allow, and ranks below every ready schedule.
+    # Without ALPHA-BETA, cs400-A + math234-A has no known walking. It scores
+    # the neutral half, not 100, and ranks below every ready schedule.
     "missing walking edge on a surviving schedule": (
         lambda r: r["walking_edges"].pop(0),
         [
             (BB, 100.0, "ready", []),
             (AB, 30.12, "ready", []),
-            (AA, 62.71, "needs_review", ["walking_time_unknown"]),
+            (AA, 50.0, "needs_review", ["walking_time_unknown"]),
         ],
         FIXTURE_DIAGNOSTICS,
     ),
@@ -552,6 +511,119 @@ def test_unknown_data_returns_200_with_review_status_or_a_reason(client, fixture
     if expected_results and expected_results[0] == (BB, 100.0, "ready", []):
         # The untouched schedule is still returned exactly as the shared fixture has it.
         assert body["results"][0] == load_fixture_expected()["results"][0]
+
+
+# --------------------------------------------------------------------------
+# Optional courses and the data-driven weights (Milestone C)
+#
+# These scenarios returned a temporary 503 until Milestone C. Each is the
+# fixture request with one change.
+# --------------------------------------------------------------------------
+
+FIXTURE_SUMMARY = [
+    (["cs400-B", "math234-B", "stat240-A"], 100.0, "ready"),
+    (["cs400-A", "math234-A", "stat240-A"], 67.03, "ready"),
+    (["cs400-A", "math234-B", "stat240-A"], 30.12, "ready"),
+]
+
+
+def _summary(body: dict) -> list[tuple]:
+    return [
+        ([s["bundle_id"] for s in r["selected"]], r["score"], r["status"]) for r in body["results"]
+    ]
+
+
+@pytest.mark.parametrize("weight", ["grade_outcomes", "degree_fit"])
+def test_weight_about_optional_courses_changes_nothing_when_none_are_selected(
+    client, fixture_request, weight
+):
+    """Formerly '<weight> weight' -> 503. Every course is required, so the
+    factor is the same for every schedule and is left out of the score."""
+    fixture_request["preferences"]["weights"][weight] = 0.5
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    assert response.json() == load_fixture_expected()
+
+
+def test_instructor_weight_without_any_ratings_is_reported_not_scored(client, fixture_request):
+    """Formerly 'instructor weight' -> 503."""
+    fixture_request["preferences"]["weights"]["instructor"] = 1
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    body = response.json()
+    assert _summary(body) == FIXTURE_SUMMARY
+    assert body["diagnostics"] == FIXTURE_DIAGNOSTICS
+    for result in body["results"]:
+        assert result["warnings"] == [
+            "instructor_data_missing: No instructor ratings were provided; "
+            "the instructor preference did not affect the score."
+        ]
+
+
+def test_optional_course_fills_the_credit_range(client, fixture_request):
+    """Formerly 'optional courses needed for credits' -> 503.
+
+    CS 400 + MATH 234 give 7 of the 10 credits, so STAT 240 is added. Counted
+    combinations: 2 x 2 bundles x (take or leave STAT 240) = 8.
+    """
+    fixture_request["courses"][2]["is_required"] = False
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    body = response.json()
+    models.GenerateResponse.model_validate(body)
+    assert _summary(body) == FIXTURE_SUMMARY
+    expected = load_fixture_expected()["results"]
+    for result, baseline in zip(body["results"], expected):
+        assert result["selected"] == baseline["selected"]
+        assert result["metrics"] == baseline["metrics"]
+        assert result["warnings"] == []
+        assert result["reasons"] == baseline["reasons"] + ["Optional courses selected: STAT 240."]
+    assert body["diagnostics"] == {
+        "explored_combinations": 8,
+        "rejected_by_reason": {"credits_out_of_range": 3, "time_overlap": 2},
+        "search_truncated": False,
+        "no_results_reasons": [],
+    }
+
+
+def test_request_with_no_required_course_selects_among_optional_ones(client, fixture_request):
+    """Formerly 'no required course at all' -> 503.
+
+    With 0 to 10 credits allowed, every non-empty set of the three courses is
+    a schedule. Several walk 0 minutes and tie at 100; IDs decide the order.
+    """
+    for candidate in fixture_request["courses"]:
+        candidate["is_required"] = False
+    fixture_request["constraints"]["min_credits"] = 0
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    body = response.json()
+    models.GenerateResponse.model_validate(body)
+    assert _summary(body) == [
+        (["cs400-A"], 100.0, "ready"),
+        (["cs400-A", "stat240-A"], 100.0, "ready"),
+        (["cs400-B"], 100.0, "ready"),
+    ]
+    assert all(result["selected"] for result in body["results"])
+    assert body["diagnostics"] == {
+        "explored_combinations": 17,  # 3 x 3 x 2 choices, less the empty selection
+        "rejected_by_reason": {"time_overlap": 2},
+        "search_truncated": False,
+        "no_results_reasons": [],
+    }
+
+
+def test_not_implemented_is_no_longer_returned(client, fixture_request):
+    """Every temporary guard is gone: the busiest request the contract allows is answered."""
+    fixture_request["preferences"]["weights"].update(
+        walking=1, idle_gap=1, campus_days=1, grade_outcomes=1, degree_fit=1, instructor=1
+    )
+    fixture_request["courses"][2]["is_required"] = False
+    fixture_request["courses"].append(_optional_course(eligibility_status="unknown"))
+    fixture_request["constraints"].update(min_credits=10, max_credits=13)
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    assert response.json()["results"]
 
 
 def test_unexpected_failure_returns_503_internal_error(fixture_request, monkeypatch):

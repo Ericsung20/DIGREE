@@ -6,11 +6,9 @@ import pytest
 
 from app.models import Metrics, Weights
 from app.scoring import (
-    FALLBACK_WALKING_MIN,
-    UnknownTravel,
+    NEUTRAL_COMPONENT,
     campus_days_component,
     idle_gap_component,
-    neutral_walking_minutes,
     ranking_key,
     schedule_score,
     walking_component,
@@ -212,64 +210,49 @@ def test_selected_courses_follow_request_order():
 
 # --------------------------------------------------------------------------
 # Scoring schedules with walks of unknown length
+#
+# No number of minutes is ever made up. Walking and idle time score a neutral
+# 0.5, or less when the known part of the week already rules 0.5 out.
 # --------------------------------------------------------------------------
 
-NOTHING_KNOWN = dict(walking=0, idle_gap=0)
-ROOMY = UnknownTravel(gap_minutes=120, max_walk_minutes=120)
+
+@pytest.mark.parametrize("factor", ["walking", "idle_gap"])
+def test_unknown_walk_scores_the_neutral_half_not_a_perfect_score(factor):
+    nothing_known = _metrics(walking=0, idle_gap=0)
+    assert NEUTRAL_COMPONENT == 0.5
+    assert schedule_score(nothing_known, _weights(**{factor: 1})) == 100.0
+    assert schedule_score(nothing_known, _weights(**{factor: 1}), travel_complete=False) == 50.0
 
 
-def test_neutral_walking_is_the_median_of_fully_known_schedules():
-    assert neutral_walking_minutes([_metrics(walking=w) for w in (36, 0, 12)]) == 12
-    assert neutral_walking_minutes([_metrics(walking=0), _metrics(walking=36)]) == 18
-    assert neutral_walking_minutes([_metrics(walking=w) for w in (5, 40, 0, 18)]) == (
-        neutral_walking_minutes([_metrics(walking=w) for w in (18, 0, 40, 5)])
+@pytest.mark.parametrize("factor, scale", [("walking", 30), ("idle_gap", 60)])
+def test_known_part_of_the_week_caps_the_neutral_score(factor, scale):
+    """90 confirmed minutes already score below 0.5; the real total can only be higher."""
+    metrics = _metrics(walking=90, idle_gap=90)
+    assert schedule_score(metrics, _weights(**{factor: 1}), travel_complete=False) == round(
+        100 * math.exp(-90 / scale), 2
     )
 
 
-def test_neutral_walking_falls_back_to_the_walk_that_scores_half():
-    assert neutral_walking_minutes([]) == FALLBACK_WALKING_MIN
-    assert walking_component(FALLBACK_WALKING_MIN) == pytest.approx(0.5)
-    assert schedule_score(_metrics(**NOTHING_KNOWN), _weights(walking=1), ROOMY) == 50.0
+def test_small_known_part_does_not_lift_the_score_above_neutral():
+    """6 known minutes would score 81.87 on their own; with a walk unknown that is not earned."""
+    metrics = _metrics(walking=6, idle_gap=4)
+    assert schedule_score(metrics, _weights(walking=1)) == 81.87
+    assert schedule_score(metrics, _weights(walking=1), travel_complete=False) == 50.0
 
 
-def test_unknown_walk_is_scored_at_the_neutral_value_not_as_zero_minutes():
-    metrics = _metrics(**NOTHING_KNOWN)
-    assert schedule_score(metrics, _weights(walking=1)) == 100.0
-    assert schedule_score(metrics, _weights(walking=1), ROOMY, neutral_walking=18) == round(
-        100 * math.exp(-18 / 30), 2
-    )
-
-
-def test_assumed_walk_comes_out_of_the_idle_time_between_the_same_classes():
-    metrics = _metrics(**NOTHING_KNOWN)
-    assert schedule_score(metrics, _weights(idle_gap=1), ROOMY, neutral_walking=18) == round(
-        100 * math.exp(-(120 - 18) / 60), 2
-    )
-
-
-def test_assumed_walk_is_limited_to_what_the_gaps_allow():
-    tight = UnknownTravel(gap_minutes=10, max_walk_minutes=7)
-    metrics = _metrics(**NOTHING_KNOWN)
-    assert schedule_score(metrics, _weights(walking=1), tight, neutral_walking=18) == round(
-        100 * math.exp(-7 / 30), 2
-    )
-    assert schedule_score(metrics, _weights(idle_gap=1), tight, neutral_walking=18) == round(
-        100 * math.exp(-3 / 60), 2
-    )
-
-
-def test_known_walking_above_the_neutral_value_is_never_reduced():
-    metrics = _metrics(walking=90, idle_gap=30)
-    assert schedule_score(metrics, _weights(walking=1), ROOMY, neutral_walking=18) == round(
-        100 * math.exp(-90 / 30), 2
-    )
-    assert schedule_score(metrics, _weights(idle_gap=1), ROOMY, neutral_walking=18) == round(
-        100 * math.exp(-(30 + 120) / 60), 2
-    )
+@pytest.mark.parametrize("weights", [{"walking": 1}, {"idle_gap": 1}, {"walking": 1, "idle_gap": 0.5}])
+def test_unknown_walk_never_scores_above_the_same_figures_fully_known(weights):
+    for minutes in range(0, 200, 9):
+        metrics = _metrics(walking=minutes, idle_gap=2 * minutes, campus_days=3)
+        incomplete = schedule_score(metrics, _weights(**weights), travel_complete=False)
+        assert incomplete <= schedule_score(metrics, _weights(**weights)), minutes
 
 
 def test_campus_days_are_scored_the_same_with_unknown_walks():
-    assert schedule_score(_metrics(campus_days=3), _weights(campus_days=1), ROOMY, 18) == 50.0
+    metrics = _metrics(campus_days=3)
+    assert schedule_score(metrics, _weights(campus_days=1), travel_complete=False) == 50.0
+    assert schedule_score(metrics, _weights(campus_days=1)) == 50.0
+    assert schedule_score(_metrics(campus_days=1), _weights(campus_days=1), travel_complete=False) == 100.0
 
 
 AA = ("cs400-A", "math234-A", "stat240-A")
@@ -277,13 +260,6 @@ AB = ("cs400-A", "math234-B", "stat240-A")
 BB = ("cs400-B", "math234-B", "stat240-A")
 
 ALPHA_BETA, ALPHA_GAMMA = 0, 1  # positions in the fixture's walking_edges
-
-WEIGHT_MIXES = [
-    {"walking": 1},
-    {"walking": 0, "idle_gap": 1},
-    {"walking": 1, "idle_gap": 1},
-    {"walking": 0.5, "idle_gap": 1, "campus_days": 0.25},
-]
 
 
 def _fixture(weights: dict, edge_index: int, minutes: int | None) -> dict:
@@ -304,14 +280,13 @@ def _by_bundles(response) -> dict:
 def test_missing_walking_time_does_not_earn_a_perfect_walking_score():
     """Without ALPHA-BETA, cs400-A + math234-A has no known walking at all.
 
-    The fully known schedules walk 0 and 36 minutes, so the neutral value is
-    18. Its two 10-minute gaps, less the 3-minute buffer, allow only 14.
+    Its walking subtotal is 0, which would score 100 if it were a real figure.
     """
     results = _by_bundles(run(_fixture({}, ALPHA_BETA, None)))
     unknown = results[AA]
     assert unknown.metrics.walking_minutes_weekly == 0
     assert unknown.status == "needs_review"
-    assert unknown.score == round(100 * math.exp(-14 / 30), 2) == 62.71
+    assert unknown.score == 50.0
     assert unknown.score < results[BB].score == 100.0
 
 
@@ -319,8 +294,7 @@ def test_missing_walking_time_does_not_earn_a_perfect_idle_gap_score():
     results = _by_bundles(run(_fixture({"walking": 0, "idle_gap": 1}, ALPHA_BETA, None)))
     unknown = results[AA]
     assert unknown.metrics.idle_gap_minutes_weekly == 0
-    assert unknown.score == round(100 * math.exp(-(20 - 14) / 60), 2)
-    assert unknown.score < 100.0
+    assert unknown.score == 50.0
 
 
 def test_ready_schedules_rank_above_review_schedules_with_higher_scores():
@@ -328,35 +302,32 @@ def test_ready_schedules_rank_above_review_schedules_with_higher_scores():
     assert [(tuple(bundle_ids(r)), r.status, r.score) for r in results] == [
         (BB, "ready", 100.0),
         (AB, "ready", 30.12),
-        (AA, "needs_review", 62.71),
+        (AA, "needs_review", 50.0),
     ]
 
 
-@pytest.mark.parametrize("weights", WEIGHT_MIXES)
-def test_unknown_walk_scores_exactly_like_the_same_walk_at_the_assumed_length(weights):
-    """Missing data is scored as one real, feasible week: here a 7-minute walk each day."""
-    missing = _by_bundles(run(_fixture(weights, ALPHA_BETA, None)))[AA]
-    known = _by_bundles(run(_fixture(weights, ALPHA_BETA, 7)))[AA]
-    assert known.status == "ready"
-    assert missing.score == known.score
+@pytest.mark.parametrize("edge_index, schedule", [(ALPHA_BETA, AA), (ALPHA_GAMMA, AB)])
+def test_unknown_walk_never_beats_knowing_the_walk_takes_zero_minutes(edge_index, schedule):
+    """A zero-minute walk is the best case for walking; not knowing must not score higher."""
+    missing = _by_bundles(run(_fixture({}, edge_index, None)))[schedule]
+    known_zero = _by_bundles(run(_fixture({}, edge_index, 0)))[schedule]
+    assert known_zero.status == "ready"
+    assert missing.score < known_zero.score == 100.0
 
 
-@pytest.mark.parametrize(
-    "edge_index, schedule, longest_feasible", [(ALPHA_BETA, AA, 7), (ALPHA_GAMMA, AB, 30)]
-)
-def test_unknown_walk_never_scores_outside_what_a_real_walk_could(edge_index, schedule, longest_feasible):
-    """0 minutes is the best case for walking and the worst for idle time; the
-    longest walk the gap allows is the reverse. The estimate stays in between."""
+def test_unknown_walk_score_does_not_depend_on_the_other_schedules():
+    """The neutral value is fixed, so the same schedule scores the same in any company."""
+    in_fixture = _by_bundles(run(_fixture({}, ALPHA_BETA, None)))[AA]
 
-    def score(weights: dict, minutes: int | None) -> float:
-        return _by_bundles(run(_fixture(weights, edge_index, minutes)))[schedule].score
-
-    walking, idle = {"walking": 1}, {"walking": 0, "idle_gap": 1}
-    assert score(walking, longest_feasible) <= score(walking, None) <= score(walking, 0)
-    assert score(idle, 0) <= score(idle, None) <= score(idle, longest_feasible)
+    alone = _fixture({}, ALPHA_BETA, None)
+    alone["courses"][0]["section_bundles"].pop(1)  # leaves cs400-A
+    alone["courses"][1]["section_bundles"].pop(1)  # leaves math234-A
+    only = run(alone).results
+    assert [tuple(bundle_ids(r)) for r in only] == [AA]
+    assert only[0].score == in_fixture.score == 50.0
 
 
-def test_unknown_walk_with_nothing_to_compare_against_uses_the_fallback():
+def test_unknown_walk_with_nothing_to_compare_against_scores_the_same_neutral_value():
     payload = request(
         [
             course("x", [bundle("x-A", [meeting("MON", 600, 650, "ALPHA")])]),
@@ -366,9 +337,7 @@ def test_unknown_walk_with_nothing_to_compare_against_uses_the_fallback():
     )
     result = run(payload).results[0]
     assert result.status == "needs_review"
-    assert result.score == round(
-        100 * (0.5 + math.exp(-(50 - FALLBACK_WALKING_MIN) / 60)) / 2, 2
-    )
+    assert result.score == 50.0
 
 
 def test_large_known_walk_is_not_hidden_by_an_unknown_one():

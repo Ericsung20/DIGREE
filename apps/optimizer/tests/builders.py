@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from app.config import SearchLimits
 from app.engine import generate
 from app.models import GenerateRequest, GenerateResponse
 
@@ -89,8 +90,8 @@ def request(courses: list[dict], edges: list[dict] | None = None, top_k: int = 5
     }
 
 
-def run(payload: dict) -> GenerateResponse:
-    return generate(GenerateRequest.model_validate(payload))
+def run(payload: dict, limits: SearchLimits | None = None) -> GenerateResponse:
+    return generate(GenerateRequest.model_validate(payload), limits or SearchLimits())
 
 
 def bundle_ids(result) -> list[str]:

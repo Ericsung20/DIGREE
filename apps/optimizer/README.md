@@ -4,7 +4,7 @@ Standalone scheduling optimization API for DIGREE. It receives normalized, anony
 
 - Contract: `contracts/openapi.yaml` (v1.0)
 - Reference request and response: `fixtures/request.json`, `fixtures/expected.json`
-- Status: **Milestone B** (required-course schedules, all hard constraints, unknown-data handling, warnings, diagnostics)
+- Status: **Milestone C** (optional-course selection, all six scoring factors, search limits; on top of the hard constraints and unknown-data handling)
 
 Nothing in a response is a university verification. `ready` means the optimizer found no problem in the data it was given, not that enrollment is assured.
 
@@ -17,7 +17,16 @@ python3.13 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 ```
 
-There are no environment variables.
+## Configuration
+
+Two optional environment variables bound the search. They are read once at startup; an invalid value stops the service with an error naming the variable.
+
+| Variable | Default | Allowed | Meaning |
+|---|---|---|---|
+| `DIGREE_MAX_SEARCH_STEPS` | `100000` | 1 to 10,000,000 | Search steps per request before the search stops |
+| `DIGREE_MAX_OPTIONAL_COURSES` | `20` | 1 to 200 | Optional courses considered per request |
+
+A step is one section placement or one schedule evaluation. Limits count steps, not seconds, so the same request and limits give the same response on any machine. At the default, the slowest request measured took under one second.
 
 ## Run
 
@@ -45,10 +54,13 @@ The second command returns exactly the content of `fixtures/expected.json`.
 
 | File | Covers |
 |---|---|
-| `tests/test_contract.py` | Fixture request to expected response, models against the OpenAPI file, 422 and 503 bodies, unknown-data scenarios over HTTP |
+| `tests/test_contract.py` | Fixture request to expected response, models against the OpenAPI file, 422 and 503 bodies, scenarios over HTTP |
 | `tests/test_constraints.py` | H1-H10: time window, blocked days, overlap, walking, credits, eligibility, full sections, diagnostics |
-| `tests/test_unknown_data.py` | `needs_review`, warnings, meeting modes, missing buildings and walking times, wording |
-| `tests/test_ranking.py` | Score formulas, scoring with unknown walks, Top K, tie-breaking, reproducibility |
+| `tests/test_unknown_data.py` | `needs_review`, review warnings, meeting modes, missing buildings and walking times, wording |
+| `tests/test_optional_courses.py` | When optional courses are added, which are usable, variable credits, no required courses, counts |
+| `tests/test_scoring_factors.py` | Grade smoothing, degree fit, instructor, missing data, factors left out, advisory warnings |
+| `tests/test_search_limits.py` | Step cap, shortlist, truncation diagnostics, configuration |
+| `tests/test_ranking.py` | Shape-factor formulas, scoring with unknown walks, Top K, tie-breaking, reproducibility |
 
 ## Code layout
 
@@ -56,8 +68,9 @@ The second command returns exactly the content of `fixtures/expected.json`.
 |---|---|
 | `app/main.py` | Routes and error mapping |
 | `app/models.py` | Pydantic models mirroring the contract, plus cross-field validation |
-| `app/engine.py` | Search, hard constraints, unknown-data handling, diagnostics |
-| `app/scoring.py` | Score formulas and the ranking key |
+| `app/engine.py` | Course and section search, hard constraints, unknown-data handling, diagnostics |
+| `app/scoring.py` | Score formulas, neutral values and the ranking key |
+| `app/config.py` | Search limits and their environment variables |
 | `app/messages.py` | Every code and sentence the API emits |
 
 ## Responses
@@ -66,7 +79,7 @@ The second command returns exactly the content of `fixtures/expected.json`.
 |---|---|---|
 | 200 | The search ran. `results` may be empty; that is a normal answer, explained in `diagnostics`. | `GenerateResponse` |
 | 422 | The request is malformed or internally inconsistent. | `{"error": {"code": "validation_error", "message", "details"}}` |
-| 503 | The request needs behaviour that is not built yet (`not_implemented`), or the optimizer failed unexpectedly (`internal_error`). | `{"error": {"code", "message", "details"}}` |
+| 503 | The optimizer failed unexpectedly (`internal_error`). | `{"error": {"code", "message", "details"}}` |
 
 Every `details` entry has the form `<path>: <message>`, for example `courses[0].section_bundles[1].meetings[0]: start_min must be less than end_min`.
 
@@ -80,9 +93,19 @@ Beyond the OpenAPI schema, these are rejected with 422:
 - two walking edges that give different minutes for the same directed pair, or a non-zero walking time from a building to itself
 - unknown fields, and values of the wrong JSON type (`"10"` or `10.0` where an integer is required)
 
-## Hard constraints
+## Which courses a schedule contains
 
-Schedules are built from the **required** courses: one section bundle and one credit option per course.
+Every schedule holds **all required courses**, each with one section bundle and one credit option.
+
+**Optional courses** (`is_required: false`) are added only when the required courses cannot reach the credit range on their own, that is, when no combination of their credit options lands inside `min_credits..max_credits`. Then every set of usable optional courses whose total lands inside the range is a candidate: with 9 required credits and a 12-18 range, schedules of 12, 15 and 18 credits are all eligible. When the required courses already fit the range, optional courses are not considered at all.
+
+An optional course is usable unless it is `ineligible`, `already_completed` and not `repeatable`, or has no section bundles. One with `eligibility_status: unknown` is usable, and a schedule containing it is `needs_review`.
+
+With **no required course**, schedules are built from optional courses alone. A schedule always contains at least one course, and the range is applied as given: with `max_credits: 0` nothing fits and `results` is empty.
+
+A course with several `credit_options` yields one schedule per option that fits.
+
+## Hard constraints
 
 | Check | `rejected_by_reason` key |
 |---|---|
@@ -96,14 +119,18 @@ Schedules are built from the **required** courses: one section bundle and one cr
 
 A required course that is `ineligible`, or `already_completed` and not `repeatable`, rules out every schedule: the response has `results: []`, nothing is explored, and `no_results_reasons` says why.
 
-**Diagnostics.** `explored_combinations` counts complete combinations (one bundle and one credit option for every required course). When the search abandons a partial selection, every combination beneath it is counted. Each rejected combination is counted once, under the first check it fails in the order above. Keys with a count of 0 are omitted.
+**Diagnostics.** A combination settles every course in the search: a bundle and a credit option for each required course, and for each optional course either a bundle and a credit option or leaving it out. Selecting no course at all is not a combination. `explored_combinations` counts the combinations examined; when the search abandons a partial selection, every combination beneath it is counted. Each rejected combination is counted once, under the first check it fails in the order above. Keys with a count of 0 are omitted.
+
+With optional courses the number grows quickly, because each one multiplies the combinations. It measures the size of the search, not the number of results, and for very large requests it can exceed the range JavaScript represents exactly (2^53).
 
 **`no_results_reasons`** is filled only when `results` is empty. It holds bare codes in this order:
 
-1. `required_course_ineligible`
-2. `required_course_already_completed`
-3. `required_course_without_bundles` (a required course has an empty `section_bundles` list)
-4. the `rejected_by_reason` keys that occurred, in the order of the table above
+1. `search_truncated` (the search stopped at a limit; a schedule may still exist)
+2. `required_course_ineligible`
+3. `required_course_already_completed`
+4. `required_course_without_bundles` (a required course has an empty `section_bundles` list)
+5. `no_usable_optional_courses` (optional courses were needed and none was usable)
+6. the `rejected_by_reason` keys that occurred, in the order of the table above
 
 ## Meeting modes
 
@@ -115,11 +142,11 @@ A required course that is `ineligible`, or `already_completed` and not `repeatab
 
 All modes obey the time window, blocked days and overlap checks. `campus_days` counts days with at least one in-person or hybrid meeting. A bundle with `meetings: []` is asynchronous: it adds credits and nothing else.
 
-## Unknown data: `needs_review` and warnings
+## Warnings
 
-The optimizer never fills a gap in the data with a guess. A schedule that depends on something unknown is still returned, with `status: needs_review` and a warning for each open question.
+Every warning is one string, `<code>: <message>`. Split on the first `": "` to get the code. A result lists its review warnings first, then its advisory warnings, each group in the order of its table and then in request order.
 
-Every warning is one string, `<code>: <message>`. Split on the first `": "` to get the code. Warnings are listed in the order of this table, then in request order.
+**Review warnings** are open questions about whether the schedule can be taken. Any one of them makes the result `needs_review`. The optimizer never fills a gap in the data with a guess; it returns the schedule and says what is unknown.
 
 | Code | Raised when the selected schedule has |
 |---|---|
@@ -130,7 +157,15 @@ Every warning is one string, `<code>: <message>`. Split on the first `": "` to g
 | `walking_time_unknown` | two consecutive classes in different buildings with no walking edge for that direction |
 | `location_uncertain` | an online meeting directly before or after an in-person or hybrid one on the same day |
 
-All six currently make the result `needs_review`. That is a property of these codes, not of warnings in general: a later advisory warning may leave a result `ready`, so clients should read `status` rather than test whether `warnings` is empty.
+**Advisory warnings** describe how the result was scored or found. They never change the status, so a `ready` result can carry them. Read `status`; do not infer it from whether `warnings` is empty.
+
+| Code | Meaning |
+|---|---|
+| `grade_data_missing` | A selected optional course has no grade statistics and took a neutral value; or no optional course has any, and the grade weight was not applied |
+| `degree_fit_data_missing` | The same, for `requirement_fit` |
+| `instructor_data_missing` | A selected section has no instructor rating and took a neutral value; or no section has one, and the instructor weight was not applied |
+| `score_not_comparable` | No weighted factor can tell the schedules apart; every score is 50 and the order follows IDs |
+| `search_incomplete` | The search stopped at a limit; better schedules may exist |
 
 **Transitions the optimizer cannot check.** For each day, meetings are sorted by start time and each consecutive pair is one transition.
 
@@ -151,23 +186,40 @@ A schedule with an unchecked transition is still rejected if another, known tran
 
 When a schedule has unchecked transitions, both walking figures are **subtotals over the known transitions only**. The result's `reasons` say so.
 
-## Score and ranking
+## Score
 
-`score = 100 * sum(weight * component) / sum(weight)` over the factors below, rounded to 2 decimals.
+`score = 100 * sum(weight * value) / sum(weight)` over the factors being compared, rounded to 2 decimals. Every value is between 0 and 1.
 
-| Weight | Component |
-|---|---|
-| `walking` | `exp(-walking_minutes_weekly / 30)` |
-| `idle_gap` | `exp(-idle_gap_minutes_weekly / 60)` |
-| `campus_days` | `1 - (campus_days - 1) / 4`, limited to 0..1 |
+| Weight | Data | Value |
+|---|---|---|
+| `walking` | meetings, `walking_edges` | `exp(-walking_minutes_weekly / 30)` |
+| `idle_gap` | meetings | `exp(-idle_gap_minutes_weekly / 60)` |
+| `campus_days` | meetings | `1 - (campus_days - 1) / 4`, limited to 0..1 |
+| `grade_outcomes` | `grade_stats` | mean smoothed A/AB rate of the selected **optional** courses |
+| `degree_fit` | `requirement_fit` | mean over the selected **optional** courses |
+| `instructor` | `instructor_score` | mean over **every** selected section |
 
-**Schedules with unknown walks** are not scored on their subtotals, which would treat every unknown walk as free. Instead:
+**Grade smoothing.** A course's rate is `(n * a_ab_rate + 25) / (n + 50)` with `n = sample_size`: each course is treated as if it came with 50 extra grades at a 50% rate. Two grades at 100% give 0.52; 400 grades at 80% give 0.77. `grade_stats: null` and `sample_size: 0` both count as no data. This is an MVP rule, not a university statistic, and says nothing certain about the grade a student will get.
 
-1. Take the neutral value: the median `walking_minutes_weekly` of the schedules in this response whose travel data is complete. If there are none, use the amount of walking that scores exactly half (about 20.8 minutes).
-2. Assume the schedule walks that much in total, but no less than its known walking and no more than its unchecked gaps allow (each gap less the buffer, and no more than the walk maximum).
-3. Take the assumed extra walking out of the idle time between the same classes.
+**Missing values are never scored as 0.** A course or section without data takes the median of the known values among everything the request could select (the usable optional courses, or all selectable sections). The result carries an advisory warning naming what was missing.
 
-The score therefore always equals the score of one real, feasible week. The reported metrics stay as known subtotals.
+**A data-driven factor is left out of the average** when it cannot tell schedules apart:
+
+- the request has no data for it at all (an advisory warning says the weight was not applied);
+- fewer than two different values are known, so every schedule would get the same value;
+- for `grade_outcomes` and `degree_fit`, no optional course is in play;
+- for `instructor` when the courses are fixed, no course has two sections with different ratings.
+
+The three shape factors are always compared. If nothing is left to compare, every schedule scores 50 with a `score_not_comparable` warning.
+
+All of this is decided from the request before the search starts. A schedule's score therefore does not depend on which other schedules were found, on `top_k`, or on the search limits.
+
+**Schedules with unknown walks.** No number of minutes is ever made up for a missing walking time. When a schedule has unchecked transitions:
+
+- its `walking` and `idle_gap` values are a neutral 0.5;
+- unless its known walking or idle time alone already scores below 0.5, in which case that lower value is used, because the real total can only be higher than the known part.
+
+The limits of this rule: 0.5 is a placeholder, not an estimate. It corresponds to about 21 minutes of weekly walking, whatever the real distance is and however many walks are unknown. A schedule whose unknown walk is in fact short is under-scored, and one whose unknown walk is long is over-scored. Such schedules are always `needs_review` and always rank below every `ready` schedule, so the placeholder only orders them among other schedules that also need review.
 
 **Ranking.** `ready` before `needs_review`, then higher rounded score, then ascending `(course_id, bundle_id, credits)`. The first `top_k` are returned with `rank` starting at 1. `selected` and `meetings` keep the order of the request.
 
@@ -179,19 +231,29 @@ The score therefore always equals the score of one real, feasible week. The repo
 | `needs_review`, every transition checked | `Class times do not overlap and every between-class walk was checked; weekly between-class walking: N min.` then `Review the warnings before enrolling.` |
 | `needs_review`, some transitions unchecked | `Class times do not overlap, but travel between some classes could not be checked.` then `Walking and idle-gap figures count known transitions only; known weekly between-class walking: N min.` then `Review the warnings before enrolling.` |
 
+## Search
+
+The search is one depth-first pass: required courses first (fewest sections first, ties in request order), then the optional pool (highest `requirement_fit` first, missing values last, ties by `course_id`). For each optional course it tries every section and credit option, then leaving the course out.
+
+Branches are cut as early as possible: when the credits already chosen plus the least still to come exceed the maximum, when even everything still available cannot reach the minimum, when a section breaks a rule on its own, or when it overlaps a section already chosen. Walking is judged only on complete schedules, because two classes that are neighbours in a partial schedule may not stay neighbours.
+
+Two limits keep large requests bounded (see Configuration):
+
+- **Step cap.** The search stops after `DIGREE_MAX_SEARCH_STEPS` steps.
+- **Shortlist.** Only the first `DIGREE_MAX_OPTIONAL_COURSES` usable optional courses, in the pool order above, are searched.
+
+When either limit leaves combinations unexamined:
+
+- `diagnostics.search_truncated` is `true`;
+- every result carries the `search_incomplete` advisory warning;
+- `explored_combinations` counts only what was examined;
+- the results are the best found, not necessarily the best that exist;
+- an empty `results` lists `search_truncated` first in `no_results_reasons`, because no schedule having been found is not proof that none exists.
+
 ## Not implemented yet
 
-A request that depends on any of the following gets **503 `not_implemented`**, with the offending fields listed in `details`. Nothing is silently ignored.
-
-| The request contains | Planned for |
-|---|---|
-| `grade_outcomes`, `degree_fit` or `instructor` weight above 0 | Milestone C |
-| Required courses that cannot reach the credit range without optional courses | Milestone C |
-| No required course at all | Milestone C |
-
-Optional courses (`is_required: false`) are never selected yet. When the required courses already satisfy the credit range, optional courses and their data have no effect on the response, so such requests are answered normally.
-
-Also not built yet: a search cap (`search_truncated` is always `false`) and the Dockerfile (Milestone D).
+- **No variety rule for the top K.** The top results can all be one set of courses with different sections.
+- **No Dockerfile** (Milestone D).
 
 ## Assumptions to confirm
 
@@ -201,5 +263,8 @@ These small rules are not stated in the handoff or contract. They are implemente
 - **The buffer is not applied next to an online meeting**, and not between two online meetings.
 - **An online meeting between two in-person ones hides the walk between them.** Both of its transitions are unchecked, and the walk between the two buildings is neither checked nor counted.
 - **Repeated values in `credit_options` are collapsed**, so `[3, 3]` behaves like `[3]`.
+- **`reasons` name the optional courses.** A schedule with optional courses adds the sentence `Optional courses selected: A, B.` to its `reasons`.
+- **A missing `requirement_fit` puts a course last in the pool order**, so with more usable optional courses than the shortlist allows, courses without a fit value are the first to be left out.
 - **The campus-days component is capped at 1.** The handoff formula gives 1.25 for a schedule with no campus days, which would push the score above 100.
-- **Which key a rejection is counted under can depend on search order.** Totals do not. Courses are searched fewest bundles first, with ties in request order.
+- **Which key a rejection is counted under can depend on search order.** Totals of a complete search do not.
+- **A truncated search can depend on request order** among required courses with the same number of sections, because that tie follows the request.

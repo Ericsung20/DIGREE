@@ -1,20 +1,22 @@
 """Pure optimization core: deterministic backtracking with pruning.
 
-No I/O, no clock, no randomness: the same request always yields the same
-response. The engine builds schedules from the required courses, enforces the
-hard constraints, and marks schedules that rest on unknown data as
-needs_review instead of guessing. Optional-course selection and the
-data-driven scoring factors are not built yet; a request that needs them
-raises UnsupportedFeatureError rather than getting a response that ignores
-part of it.
+No I/O, no clock, no randomness: the same request and limits always yield the
+same response.
+
+A schedule holds every required course, plus optional courses when the
+required ones cannot reach the credit range on their own. Each selected course
+takes exactly one section bundle and one credit option. Hard constraints
+reject combinations; unknown data marks a schedule needs_review instead of
+being guessed at.
 """
 
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import pairwise
 from math import prod
 
 from app import CONTRACT_VERSION, messages
+from app.config import SearchLimits
 from app.messages import REJECTION_REASONS
 from app.models import (
     CandidateCourse,
@@ -26,35 +28,36 @@ from app.models import (
     ScheduleResult,
     SectionBundle,
     SelectedBundle,
+    Weights,
     walking_minutes_by_pair,
 )
 from app.scoring import (
-    UNIMPLEMENTED_FACTORS,
-    UnknownTravel,
-    neutral_walking_minutes,
+    SHAPE_FACTORS,
+    DataFactor,
+    data_factor,
+    filled_mean,
     ranking_key,
     schedule_score,
+    smoothed_grade_rate,
 )
 
 DAY_ORDER = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 
 
-class UnsupportedFeatureError(Exception):
-    """The request needs behaviour that is not implemented yet."""
-
-    def __init__(self, details: list[str]):
-        super().__init__("; ".join(details))
-        self.details = details
-
-
 @dataclass(frozen=True)
 class _Slot:
-    """One required course as the search sees it."""
+    """One course as the search sees it."""
 
     request_index: int
     course: CandidateCourse
     credit_options: tuple[int, ...]
     bundle_violations: tuple[str | None, ...]  # aligned with course.section_bundles
+
+    @property
+    def choices(self) -> int:
+        """Ways to settle this course: a bundle and a credit option, or leaving it out."""
+        taken = len(self.course.section_bundles) * len(self.credit_options)
+        return taken if self.course.is_required else taken + 1
 
 
 @dataclass(frozen=True)
@@ -69,21 +72,37 @@ class _Choice:
 class _Candidate:
     choices: tuple[_Choice, ...]  # in request order
     metrics: Metrics
-    warnings: tuple[str, ...]
+    review_warnings: tuple[str, ...]
+    advisories: dict[str, str]  # advisory warnings specific to this schedule, by code
     status: str
-    unknown_travel: UnknownTravel | None  # set when the metrics are known-transition subtotals
-    score: float = 0.0
+    travel_complete: bool  # False when the metrics are subtotals over known transitions
+    score: float
 
     def sort_key(self) -> tuple:
         selection = ((c.course.course_id, c.bundle.bundle_id, c.credits) for c in self.choices)
         return ranking_key(self.status, self.score, selection)
 
 
-def generate(request: GenerateRequest) -> GenerateResponse:
-    unsupported = find_unsupported_features(request)
-    if unsupported:
-        raise UnsupportedFeatureError(unsupported)
+@dataclass(frozen=True)
+class _ScoringPlan:
+    """Which data-driven factors this request compares, decided before the search.
 
+    It depends only on the request, never on which schedules are found, so a
+    schedule scores the same whatever the search limits are.
+    """
+
+    weights: Weights
+    grade: DataFactor | None  # None: not compared
+    degree_fit: DataFactor | None
+    instructor: DataFactor | None
+    notices: dict[str, str]  # advisory warnings every result carries, by code
+
+
+class _StepLimitReached(Exception):
+    pass
+
+
+def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) -> GenerateResponse:
     required = [course for course in request.courses if course.is_required]
     blocking = _blocking_reasons(required)
     without_bundles = (
@@ -104,71 +123,46 @@ def generate(request: GenerateRequest) -> GenerateResponse:
             ),
         )
 
-    search = _Search(request)
+    optional_needed = _optional_courses_needed(request, required)
+    usable = _usable_optional_courses(request) if optional_needed else []
+    pool = usable[: limits.max_optional_courses]
+
+    plan = _scoring_plan(request.preferences.weights, required, [course for _, course in usable])
+    search = _Search(request, pool, plan, limits.max_search_steps)
     search.run()
 
-    # Schedules with unknown travel are scored against the ones that are fully known.
-    weights = request.preferences.weights
-    neutral = neutral_walking_minutes(
-        c.metrics for c in search.candidates if c.unknown_travel is None
-    )
-    scored = [
-        replace(c, score=schedule_score(c.metrics, weights, c.unknown_travel, neutral))
-        for c in search.candidates
+    # Either limit leaves combinations unexamined, so nothing below may be
+    # presented as the best possible or as proof that no schedule exists.
+    truncated = search.stopped_early or len(pool) < len(usable)
+    notices = dict(plan.notices)
+    if truncated:
+        notices["search_incomplete"] = messages.search_incomplete()
+
+    ranked = sorted(search.candidates, key=_Candidate.sort_key)[: request.top_k]
+    results = [
+        _to_result(rank, candidate, notices) for rank, candidate in enumerate(ranked, start=1)
     ]
-    ranked = sorted(scored, key=_Candidate.sort_key)[: request.top_k]
-    results = [_to_result(rank, candidate) for rank, candidate in enumerate(ranked, start=1)]
 
     occurred = [reason for reason in REJECTION_REASONS if search.rejected[reason] > 0]
+    no_results_reasons: list[str] = []
+    if not results:
+        if truncated:
+            no_results_reasons.append(messages.SEARCH_TRUNCATED)
+        no_results_reasons += without_bundles
+        if optional_needed and not usable:
+            no_results_reasons.append(messages.NO_USABLE_OPTIONAL_COURSES)
+        no_results_reasons += occurred
+
     return _response(
         request,
         results,
         Diagnostics(
             explored_combinations=search.explored,
             rejected_by_reason={reason: search.rejected[reason] for reason in occurred},
-            search_truncated=False,
-            no_results_reasons=[] if results else without_bundles + occurred,
+            search_truncated=truncated,
+            no_results_reasons=no_results_reasons,
         ),
     )
-
-
-def find_unsupported_features(request: GenerateRequest) -> list[str]:
-    """List what the request needs that is not built yet, as '<path>: <message>'."""
-    details: list[str] = []
-
-    for factor in UNIMPLEMENTED_FACTORS:
-        if getattr(request.preferences.weights, factor) > 0:
-            details.append(
-                f"preferences.weights.{factor}: scoring by {factor} is not implemented yet"
-            )
-
-    if not any(course.is_required for course in request.courses):
-        details.append(
-            "courses: no course is required; choosing among optional courses is not implemented yet"
-        )
-    elif _needs_optional_courses(request):
-        details.append(
-            "courses: required courses cannot reach the credit range on their own; "
-            "filling credits with optional courses is not implemented yet"
-        )
-    return details
-
-
-def _needs_optional_courses(request: GenerateRequest) -> bool:
-    if all(course.is_required for course in request.courses):
-        return False
-    required_totals = {0}
-    for course in request.courses:
-        if course.is_required:
-            required_totals = {
-                total + credits for total in required_totals for credits in course.credit_options
-            }
-    constraints = request.constraints
-    if any(constraints.min_credits <= total <= constraints.max_credits for total in required_totals):
-        return False
-    # Optional courses can only add credits, so they help only when some
-    # required-course total still has room below the maximum.
-    return min(required_totals) < constraints.max_credits
 
 
 def _blocking_reasons(required: list[CandidateCourse]) -> list[str]:
@@ -181,48 +175,182 @@ def _blocking_reasons(required: list[CandidateCourse]) -> list[str]:
     return reasons
 
 
+def _optional_courses_needed(request: GenerateRequest, required: list[CandidateCourse]) -> bool:
+    """Optional courses join only when the required ones cannot reach the range alone."""
+    if len(required) == len(request.courses):
+        return False
+    if not required:
+        return True
+    required_totals = {0}
+    for course in required:
+        required_totals = {
+            total + credits for total in required_totals for credits in course.credit_options
+        }
+    constraints = request.constraints
+    if any(constraints.min_credits <= total <= constraints.max_credits for total in required_totals):
+        return False
+    # Optional courses can only add credits, so they help only when some
+    # required-course total still has room below the maximum.
+    return min(required_totals) < constraints.max_credits
+
+
+def _usable_optional_courses(request: GenerateRequest) -> list[tuple[int, CandidateCourse]]:
+    """H8 for optional courses, as (request index, course), best degree fit first.
+
+    Ties go to the lower course_id, so neither the shortlist nor the search
+    order depends on how the request happens to list the courses.
+    """
+    usable = [
+        (index, course)
+        for index, course in enumerate(request.courses)
+        if not course.is_required
+        and course.eligibility_status != "ineligible"
+        and not (course.already_completed and not course.repeatable)
+        and course.section_bundles
+    ]
+    return sorted(
+        usable,
+        key=lambda item: (
+            item[1].requirement_fit is None,
+            -(item[1].requirement_fit or 0),
+            item[1].course_id,
+        ),
+    )
+
+
+def _scoring_plan(
+    weights: Weights, required: list[CandidateCourse], optional: list[CandidateCourse]
+) -> _ScoringPlan:
+    """Decide from the request alone which data-driven factors can be compared.
+
+    A factor is left out when the request holds no data for it, or when every
+    schedule is certain to get the same value. Grade outcomes and degree fit
+    are about the optional courses, so they are not compared when none are in
+    play.
+    """
+    notices: dict[str, str] = {}
+    grade = degree_fit = instructor = None
+
+    if optional and weights.grade_outcomes > 0:
+        factor = data_factor(
+            rate for c in optional if (rate := smoothed_grade_rate(c.grade_stats)) is not None
+        )
+        if not factor.has_data:
+            notices["grade_data_missing"] = messages.grade_data_unavailable()
+        elif factor.discriminating:
+            grade = factor
+
+    if optional and weights.degree_fit > 0:
+        factor = data_factor(c.requirement_fit for c in optional if c.requirement_fit is not None)
+        if not factor.has_data:
+            notices["degree_fit_data_missing"] = messages.degree_fit_data_unavailable()
+        elif factor.discriminating:
+            degree_fit = factor
+
+    if weights.instructor > 0:
+        factor = data_factor(
+            bundle.instructor_score
+            for course in required + optional
+            for bundle in course.section_bundles
+            if bundle.instructor_score is not None
+        )
+        if not factor.has_data:
+            notices["instructor_data_missing"] = messages.instructor_data_unavailable()
+        elif optional:
+            # The set of courses varies, so any two different ratings can matter.
+            if factor.discriminating:
+                instructor = factor
+        elif any(
+            len(
+                {
+                    factor.neutral if b.instructor_score is None else b.instructor_score
+                    for b in course.section_bundles
+                }
+            )
+            > 1
+            for course in required
+        ):
+            # The courses are fixed, so only a choice between sections of one
+            # course with different ratings can matter.
+            instructor = factor
+
+    compared = [name for name in SHAPE_FACTORS if getattr(weights, name) > 0]
+    if not compared and grade is None and degree_fit is None and instructor is None:
+        notices["score_not_comparable"] = messages.score_not_comparable()
+
+    return _ScoringPlan(weights, grade, degree_fit, instructor, notices)
+
+
 class _Search:
-    def __init__(self, request: GenerateRequest):
+    def __init__(
+        self,
+        request: GenerateRequest,
+        pool: list[tuple[int, CandidateCourse]],
+        plan: _ScoringPlan,
+        max_steps: int,
+    ):
         self._constraints = request.constraints
         self._walk_minutes = walking_minutes_by_pair(request.walking_edges)
+        self._plan = plan
+        self._max_steps = max_steps
 
-        slots = [
-            _Slot(
-                request_index=index,
-                course=course,
-                credit_options=tuple(sorted(set(course.credit_options))),
-                bundle_violations=tuple(self._bundle_violation(b) for b in course.section_bundles),
-            )
+        required = [
+            self._slot(index, course)
             for index, course in enumerate(request.courses)
             if course.is_required
         ]
-        # Fewest bundles first; ties keep request order.
-        self._slots = sorted(slots, key=lambda s: (len(s.course.section_bundles), s.request_index))
+        # Required courses first, fewest bundles first, ties in request order.
+        # Then the optional pool in its own order (best degree fit first).
+        required.sort(key=lambda s: (len(s.course.section_bundles), s.request_index))
+        self._slots = required + [self._slot(index, course) for index, course in pool]
 
         # Per depth: how many complete combinations, and how many credits,
-        # the courses from that depth onward can still contribute.
+        # the courses from that depth onward can still contribute. An optional
+        # course may be left out, so it contributes no minimum.
         count = len(self._slots)
         self._completions_from = [
-            prod(len(s.course.section_bundles) * len(s.credit_options) for s in self._slots[d:])
-            for d in range(count + 1)
+            prod(s.choices for s in self._slots[d:]) for d in range(count + 1)
         ]
         self._min_credits_from = [
-            sum(s.credit_options[0] for s in self._slots[d:]) for d in range(count + 1)
+            sum(s.credit_options[0] for s in self._slots[d:] if s.course.is_required)
+            for d in range(count + 1)
         ]
         self._max_credits_from = [
             sum(s.credit_options[-1] for s in self._slots[d:]) for d in range(count + 1)
         ]
 
+        self.steps = 0
+        self.stopped_early = False
         self.explored = 0
         self.rejected: Counter[str] = Counter()
         self.candidates: list[_Candidate] = []
 
+    def _slot(self, request_index: int, course: CandidateCourse) -> _Slot:
+        return _Slot(
+            request_index=request_index,
+            course=course,
+            credit_options=tuple(sorted(set(course.credit_options))),
+            bundle_violations=tuple(self._bundle_violation(b) for b in course.section_bundles),
+        )
+
     def run(self) -> None:
-        self._descend(0, 0, [])
+        try:
+            self._descend(0, 0, [])
+        except _StepLimitReached:
+            self.stopped_early = True
+
+    def _step(self) -> None:
+        """One unit of search work. Counting steps, not seconds, keeps a capped
+        search reproducible on any machine."""
+        if self.steps >= self._max_steps:
+            raise _StepLimitReached
+        self.steps += 1
 
     def _descend(self, depth: int, credits_so_far: int, chosen: list[_Choice]) -> None:
         if depth == len(self._slots):
-            self._evaluate_complete(credits_so_far, chosen)
+            self._step()
+            if chosen:  # selecting nothing is not a schedule, and is never counted
+                self._evaluate_complete(credits_so_far, chosen)
             return
 
         constraints = self._constraints
@@ -236,9 +364,11 @@ class _Search:
                 total + self._min_credits_from[depth + 1] > constraints.max_credits
                 or total + self._max_credits_from[depth + 1] < constraints.min_credits
             ):
+                self._step()
                 self._reject("credits_out_of_range", len(bundles) * completions_below)
                 continue
             for bundle, violation in zip(bundles, slot.bundle_violations):
+                self._step()
                 if violation is None and any(
                     _bundles_overlap(bundle, choice.bundle) for choice in chosen
                 ):
@@ -249,6 +379,16 @@ class _Search:
                 chosen.append(_Choice(slot.request_index, slot.course, bundle, credits))
                 self._descend(depth + 1, total, chosen)
                 chosen.pop()
+
+        if not slot.course.is_required:
+            # Leave this optional course out.
+            self._step()
+            if credits_so_far + self._max_credits_from[depth + 1] < constraints.min_credits:
+                # Nothing below can reach the minimum. With no course chosen
+                # yet, one of those combinations is the empty selection.
+                self._reject("credits_out_of_range", completions_below - (0 if chosen else 1))
+            else:
+                self._descend(depth + 1, credits_so_far, chosen)
 
     def _reject(self, reason: str, combinations: int) -> None:
         """Count every complete combination beneath a pruned selection."""
@@ -284,8 +424,8 @@ class _Search:
         return self._walk_minutes.get((origin, destination))
 
     def _evaluate_complete(self, total_credits: int, chosen: list[_Choice]) -> None:
-        # Credits need no check here: the bounds test in _descend is exact once
-        # the last course is placed.
+        # Credits need no check here: the bounds tests in _descend are exact
+        # once the last course is settled.
         # Walking is judged on complete combinations only: two meetings that
         # are adjacent in a partial selection may not stay adjacent.
         constraints = self._constraints
@@ -294,9 +434,7 @@ class _Search:
 
         walking = idle_gap = campus_days = 0
         insufficient_time = exceeds_max = False
-        # Transitions whose walking time is unknown: how many, the time between
-        # the classes, and the longest walk that time and the limits allow.
-        unknown_transitions = unknown_gap = unknown_walk_ceiling = 0
+        travel_complete = True
         unknown_pairs: set[tuple[str, str]] = set()
         online_beside_in_person: set[int] = set()  # request indexes of the online courses
 
@@ -318,9 +456,7 @@ class _Search:
                     # Where the student takes the online class is unknown.
                     online_choice = following_choice if _is_located(previous) else previous_choice
                     online_beside_in_person.add(online_choice.request_index)
-                    unknown_transitions += 1
-                    unknown_gap += gap
-                    unknown_walk_ceiling += gap
+                    travel_complete = False
                     continue
 
                 walk = self._walk_between(previous.building_id, following.building_id)
@@ -328,10 +464,7 @@ class _Search:
                     if gap < buffer:
                         insufficient_time = True  # too short even for a walk of 0 minutes
                     else:
-                        longest = gap - buffer if max_walk is None else min(gap - buffer, max_walk)
-                        unknown_transitions += 1
-                        unknown_gap += gap
-                        unknown_walk_ceiling += longest
+                        travel_complete = False
                         if previous.building_id is not None and following.building_id is not None:
                             unknown_pairs.add((previous.building_id, following.building_id))
                     continue
@@ -352,25 +485,63 @@ class _Search:
 
         self.explored += 1
         choices = tuple(sorted(chosen, key=lambda c: c.request_index))
-        warnings = _warnings(choices, unknown_pairs, online_beside_in_person)
+        metrics = Metrics(
+            total_credits=total_credits,
+            walking_minutes_weekly=walking,
+            idle_gap_minutes_weekly=idle_gap,
+            campus_days=campus_days,
+        )
+        review_warnings = _review_warnings(choices, unknown_pairs, online_beside_in_person)
+        data_values, advisories = self._data_factors(choices)
         self.candidates.append(
             _Candidate(
                 choices=choices,
-                metrics=Metrics(
-                    total_credits=total_credits,
-                    walking_minutes_weekly=walking,
-                    idle_gap_minutes_weekly=idle_gap,
-                    campus_days=campus_days,
-                ),
-                warnings=warnings,
-                status=messages.status_for(list(warnings)),
-                unknown_travel=(
-                    UnknownTravel(gap_minutes=unknown_gap, max_walk_minutes=unknown_walk_ceiling)
-                    if unknown_transitions
-                    else None
-                ),
+                metrics=metrics,
+                review_warnings=review_warnings,
+                advisories=advisories,
+                status=messages.status_for(list(review_warnings)),
+                travel_complete=travel_complete,
+                score=schedule_score(metrics, self._plan.weights, travel_complete, data_values),
             )
         )
+
+    def _data_factors(self, choices: tuple[_Choice, ...]) -> tuple[dict[str, float], dict[str, str]]:
+        """Values of the compared data-driven factors, and notes on what was missing.
+
+        A missing value takes the request's neutral value, so a course or
+        section without data is neither rewarded nor penalised for it.
+        """
+        plan = self._plan
+        optional = [c for c in choices if not c.course.is_required]
+        values: dict[str, float] = {}
+        advisories: dict[str, str] = {}
+
+        if plan.grade is not None:
+            rates = [smoothed_grade_rate(c.course.grade_stats) for c in optional]
+            values["grade_outcomes"] = filled_mean(rates, plan.grade.neutral)
+            missing = [c.course.course_code for c, rate in zip(optional, rates) if rate is None]
+            if missing:
+                advisories["grade_data_missing"] = messages.grade_data_missing(missing)
+
+        if plan.degree_fit is not None:
+            fits = [c.course.requirement_fit for c in optional]
+            values["degree_fit"] = filled_mean(fits, plan.degree_fit.neutral)
+            missing = [c.course.course_code for c, fit in zip(optional, fits) if fit is None]
+            if missing:
+                advisories["degree_fit_data_missing"] = messages.degree_fit_data_missing(missing)
+
+        if plan.instructor is not None:
+            ratings = [c.bundle.instructor_score for c in choices]
+            values["instructor"] = filled_mean(ratings, plan.instructor.neutral)
+            missing = [
+                f"{c.course.course_code} ({c.bundle.bundle_id})"
+                for c, rating in zip(choices, ratings)
+                if rating is None
+            ]
+            if missing:
+                advisories["instructor_data_missing"] = messages.instructor_data_missing(missing)
+
+        return values, advisories
 
 
 def _is_located(meeting: Meeting) -> bool:
@@ -387,12 +558,12 @@ def _bundles_overlap(a: SectionBundle, b: SectionBundle) -> bool:
     return any(_meetings_overlap(m, n) for m in a.meetings for n in b.meetings)
 
 
-def _warnings(
+def _review_warnings(
     choices: tuple[_Choice, ...],
     unknown_pairs: set[tuple[str, str]],
     online_beside_in_person: set[int],
 ) -> tuple[str, ...]:
-    """Warnings in messages.WARNING_CODES order, then request order."""
+    """Warnings in messages.REVIEW_WARNING_CODES order, then request order."""
     warnings = [
         messages.eligibility_unknown(c.course.course_code)
         for c in choices
@@ -437,7 +608,8 @@ def _response(
     )
 
 
-def _to_result(rank: int, candidate: _Candidate) -> ScheduleResult:
+def _to_result(rank: int, candidate: _Candidate, notices: dict[str, str]) -> ScheduleResult:
+    advisories = messages.in_listed_order({**notices, **candidate.advisories})
     return ScheduleResult(
         rank=rank,
         score=candidate.score,
@@ -453,10 +625,11 @@ def _to_result(rank: int, candidate: _Candidate) -> ScheduleResult:
             for choice in candidate.choices
         ],
         metrics=candidate.metrics,
-        warnings=list(candidate.warnings),
+        warnings=[*candidate.review_warnings, *advisories],
         reasons=messages.explain(
             candidate.status,
-            candidate.unknown_travel is None,
+            candidate.travel_complete,
             candidate.metrics.walking_minutes_weekly,
+            [c.course.course_code for c in candidate.choices if not c.course.is_required],
         ),
     )
