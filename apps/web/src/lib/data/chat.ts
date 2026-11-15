@@ -5,7 +5,7 @@ import {readStore, useStore, writeStore} from './local-store';
 
 // Mock of my_chat_rooms(), is_room_member() and chat_messages from the DB handoff.
 // One room per (term, course). Membership comes only from current-term self-reported records.
-export type ChatRoom = {room_id: string; term: string; course_id: string; course_code: string; participant_count: number; my_alias: string};
+export type ChatRoom = {room_id: string; term: string; course_id: string; course_code: string; participant_count: number; my_alias: string | null};
 export type ChatMessage = {id: string; room_id: string; alias: string; body: string; created_at: string; mine: boolean; reported: boolean};
 
 const roomId = (courseId: string) => `${CURRENT_TERM}-${courseId}`;
@@ -39,7 +39,7 @@ export const useMessages = () => useStore(KEY, SEED);
 
 export function sendMessage(id: string, records: CourseRecord[], body: string): string | null {
   const room = myChatRooms(records).find((r) => r.room_id === id);
-  if (!room) return "You're not in this chat.";
+  if (!room?.my_alias) return "You're not in this chat.";
   if (!body.trim()) return 'Write a message first.';
   writeStore(KEY, [...readStore(KEY, SEED), {id: crypto.randomUUID(), room_id: id, alias: room.my_alias, body: body.trim(), created_at: new Date().toISOString(), mine: true, reported: false}]);
   return null;

@@ -21,7 +21,9 @@ export async function getDigDefaults(selectedTerm?: string): Promise<DigDefaults
   const {data: terms, error} = await db.from('terms').select('id, label, is_current').order('id');
   if (error) throw error;
   const list = terms as Term[];
-  const term = list.find((t) => t.id === selectedTerm) ?? list.find((t) => t.is_current) ?? list.at(-1);
+  const planned = await db.from('user_course_records').select('term').eq('status', 'planned').order('term', {ascending: false}).limit(1).maybeSingle();
+  if (planned.error) throw planned.error;
+  const term = list.find((t) => t.id === selectedTerm) ?? list.find((t) => t.id === planned.data?.term) ?? list.at(-1);
   if (!term) return 'no-terms';
   const ids = await plannedCourseIds(db, term.id);
   const {data: courses, error: courseError} = ids.length ? await db.from('courses').select('id, code, credit_options').in('id', ids).order('code') : {data: [], error: null};
