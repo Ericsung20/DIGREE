@@ -1,0 +1,264 @@
+{
+  "contract_version": "1.0",
+  "request_id": "demo-001",
+  "term": "2027SP",
+  "results": [
+    {
+      "rank": 1,
+      "score": 100.0,
+      "status": "ready",
+      "selected": [
+        {
+          "course_id": "cs400",
+          "course_code": "COMP SCI 400",
+          "bundle_id": "cs400-B",
+          "credits": 3,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            },
+            {
+              "day": "WED",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            }
+          ]
+        },
+        {
+          "course_id": "math234",
+          "course_code": "MATH 234",
+          "bundle_id": "math234-B",
+          "credits": 4,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 720,
+              "end_min": 770,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            },
+            {
+              "day": "WED",
+              "start_min": 720,
+              "end_min": 770,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            }
+          ]
+        },
+        {
+          "course_id": "stat240",
+          "course_code": "STAT 240",
+          "bundle_id": "stat240-A",
+          "credits": 3,
+          "meetings": [
+            {
+              "day": "TUE",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            },
+            {
+              "day": "THU",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            }
+          ]
+        }
+      ],
+      "metrics": {
+        "total_credits": 10,
+        "walking_minutes_weekly": 0,
+        "idle_gap_minutes_weekly": 20,
+        "campus_days": 4
+      },
+      "warnings": [],
+      "reasons": [
+        "All selected courses fit; weekly between-class walking: 0 min."
+      ]
+    },
+    {
+      "rank": 2,
+      "score": 67.03,
+      "status": "ready",
+      "selected": [
+        {
+          "course_id": "cs400",
+          "course_code": "COMP SCI 400",
+          "bundle_id": "cs400-A",
+          "credits": 3,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 600,
+              "end_min": 650,
+              "mode": "in_person",
+              "building_id": "ALPHA"
+            },
+            {
+              "day": "WED",
+              "start_min": 600,
+              "end_min": 650,
+              "mode": "in_person",
+              "building_id": "ALPHA"
+            }
+          ]
+        },
+        {
+          "course_id": "math234",
+          "course_code": "MATH 234",
+          "bundle_id": "math234-A",
+          "credits": 4,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "BETA"
+            },
+            {
+              "day": "WED",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "BETA"
+            }
+          ]
+        },
+        {
+          "course_id": "stat240",
+          "course_code": "STAT 240",
+          "bundle_id": "stat240-A",
+          "credits": 3,
+          "meetings": [
+            {
+              "day": "TUE",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            },
+            {
+              "day": "THU",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            }
+          ]
+        }
+      ],
+      "metrics": {
+        "total_credits": 10,
+        "walking_minutes_weekly": 12,
+        "idle_gap_minutes_weekly": 8,
+        "campus_days": 4
+      },
+      "warnings": [],
+      "reasons": [
+        "All selected courses fit; weekly between-class walking: 12 min."
+      ]
+    },
+    {
+      "rank": 3,
+      "score": 30.12,
+      "status": "ready",
+      "selected": [
+        {
+          "course_id": "cs400",
+          "course_code": "COMP SCI 400",
+          "bundle_id": "cs400-A",
+          "credits": 3,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 600,
+              "end_min": 650,
+              "mode": "in_person",
+              "building_id": "ALPHA"
+            },
+            {
+              "day": "WED",
+              "start_min": 600,
+              "end_min": 650,
+              "mode": "in_person",
+              "building_id": "ALPHA"
+            }
+          ]
+        },
+        {
+          "course_id": "math234",
+          "course_code": "MATH 234",
+          "bundle_id": "math234-B",
+          "credits": 4,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 720,
+              "end_min": 770,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            },
+            {
+              "day": "WED",
+              "start_min": 720,
+              "end_min": 770,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            }
+          ]
+        },
+        {
+          "course_id": "stat240",
+          "course_code": "STAT 240",
+          "bundle_id": "stat240-A",
+          "credits": 3,
+          "meetings": [
+            {
+              "day": "TUE",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            },
+            {
+              "day": "THU",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            }
+          ]
+        }
+      ],
+      "metrics": {
+        "total_credits": 10,
+        "walking_minutes_weekly": 36,
+        "idle_gap_minutes_weekly": 104,
+        "campus_days": 4
+      },
+      "warnings": [],
+      "reasons": [
+        "All selected courses fit; weekly between-class walking: 36 min."
+      ]
+    }
+  ],
+  "diagnostics": {
+    "explored_combinations": 4,
+    "rejected_by_reason": {
+      "time_overlap": 1
+    },
+    "search_truncated": false,
+    "no_results_reasons": []
+  }
+}
