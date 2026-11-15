@@ -90,9 +90,9 @@ export default function LoginPage() {
   return (
     <Frame css={CSS} extra="padding: 0 24px 28px">
       <div style={s('flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding-top: 20px')}>
-        <AppIcon className="plant" style="width: 92px; height: 92px; filter: drop-shadow(0 10px 22px rgba(140,29,43,0.28))" />
+        <AppIcon className="plant" style="width: 92px; height: 92px" />
         <Wordmark className="rise" style="font-size: 44px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; animation-delay: 200ms" />
-        <span className="rise" style={s('font-size: 17px; font-weight: 700; color: #5F5A55; animation-delay: 280ms')}>Classes, schedules and GPA for UW–Madison</span>
+        <span className="rise" style={s('font-size: 17px; font-weight: 700; color: #5F5A55; text-align: center; animation-delay: 280ms')}>Classes, schedules and GPA for UW–Madison</span>
       </div>
 
       <form className="rise" noValidate onSubmit={(event) => {

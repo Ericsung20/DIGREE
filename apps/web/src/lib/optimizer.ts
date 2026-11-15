@@ -1,7 +1,7 @@
 // Server-only: called from the /api/dig/generate route handler, never from the browser.
 import type {components} from './contract/types';
 import expected from '../mocks/expected.json';
-import {buildGenerateRequest, type GenerateRequest} from './data/generate-request';
+import {buildGenerateRequest, buildSampleGenerateRequest, type GenerateRequest} from './data/generate-request';
 
 export type GenerateResponse = components['schemas']['GenerateResponse'];
 export type ScheduleResult = components['schemas']['ScheduleResult'];
@@ -71,7 +71,9 @@ export const usesFixtureRequest = () => process.env.DIGREE_MOCK === '1' || proce
 export async function generateSchedules(mockVariant?: string, rawInputs?: unknown): Promise<GenerateOutcome> {
   let body: GenerateRequest;
   if (usesFixtureRequest()) {
-    body = buildGenerateRequest();
+    const built = process.env.DIGREE_MOCK === '1' || rawInputs === undefined ? buildGenerateRequest() : buildSampleGenerateRequest(rawInputs);
+    if ('error' in built) return {kind: 'validation', message: built.error};
+    body = built;
   } else {
     // Loaded on demand: it reads cookies, which only exist inside a Next.js request.
     const {buildGenerateRequestFromDb} = await import('./dig-server');

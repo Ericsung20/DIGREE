@@ -61,8 +61,6 @@ export function AppIcon({className, style}: {className?: string; style: string})
       <g clipPath="url(#authIcon)">
         <rect width="100" height="100" fill="#8C1D2B" />
         <g transform="translate(37.5 12) scale(1.25)" fill="#FFFFFF"><circle cx="10" cy="5.5" r="5" /><rect x="6.5" y="14" width="7" height="20" rx="3.5" /><path d="M2 30H18V37C18 43 14 47.5 10 51C6 47.5 2 43 2 37Z" stroke="#FFFFFF" strokeWidth="2" strokeLinejoin="round" /></g>
-        <path d="M0 68Q50 62 100 68V100H0Z" fill="#8C1D2B" />
-        <path d="M14 68Q50 62 86 68" fill="none" stroke="#FFFFFF" strokeOpacity="0.55" strokeWidth="3.5" strokeLinecap="round" />
       </g>
     </svg>
   );

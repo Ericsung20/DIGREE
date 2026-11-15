@@ -8,6 +8,7 @@ import {useCourseDetails, useTerms} from '@/lib/data/catalog';
 import {removeCourseRecord, useCourseRecords} from '@/lib/data/course-records';
 import {digTerm, saveDigConditions, startDig, useDigConditions, type MustTake} from '@/lib/data/dig-session';
 import {CREDIT_LIMIT, type DigConditions} from '@/lib/dig-view';
+import {BREADTH_OPTIONS} from '@/lib/breadth';
 import {IS_MOCK} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
 import {DAY_LETTERS, DAY_NAMES, hourLabel} from '@/lib/ui/format';
@@ -161,6 +162,17 @@ function GenerateSetup() {
               return (
                 <button key={key} type="button" className="press" aria-pressed={on} onClick={() => update({prefer: {...conditions.prefer, [key]: !on}})} style={s(`height: 44px; padding: 0 18px; border: none; border-radius: 22px; font-size: 14px; font-weight: 800; cursor: pointer; transition: background 220ms ease, color 220ms ease, transform 160ms ease; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: #FFFFFF; color: #5F5A55; box-shadow: 0 1px 3px rgba(40,20,20,0.08)'}`)}>{(on ? '✓  ' : '') + label}</button>
               );
+            })}
+          </div>
+        </section>
+
+        <section className="rise" style={s('display: flex; flex-direction: column; gap: 10px; animation-delay: 360ms')}>
+          <h2 style={s('margin: 0; font-size: 15px; font-weight: 800')}>Preferred breadth</h2>
+          <div style={s('display: flex; flex-wrap: wrap; gap: 8px')}>
+            {BREADTH_OPTIONS.map(({code, label}) => {
+              const on = conditions.breadths.includes(code);
+              return <button key={code} type="button" className="press" aria-pressed={on} onClick={() => update({breadths: on ? conditions.breadths.filter((item) => item !== code) : [...conditions.breadths, code]})}
+                style={s(`min-height: 44px; padding: 0 16px; border: none; border-radius: 22px; font-size: 14px; font-weight: 800; cursor: pointer; transition: background 220ms ease, color 220ms ease, transform 160ms ease; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: #FFFFFF; color: #5F5A55; box-shadow: 0 1px 3px rgba(40,20,20,0.08)'}`)}>{on ? '✓ ' : ''}{label} ({code})</button>;
             })}
           </div>
         </section>

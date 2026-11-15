@@ -1,6 +1,7 @@
 // Pure presentation logic for DIG: turns conditions and an optimizer response into what the
 // Recommendations and Schedule Preview screens show. No network, no storage, so it runs in tests.
 import type {components} from './contract/types';
+import {BREADTH_OPTIONS} from './breadth';
 import type {DigPrefer} from './dig-request';
 import {DAYS} from './time';
 import {DAY_SHORT, courseList, dayIndex, dayRange, hourLabel, plural, timeOfDay} from './ui/format';
@@ -16,9 +17,10 @@ export type DigConditions = {
   earliest: number;
   latest: number;
   prefer: {walks: boolean; lunch: boolean; days: boolean};
+  breadths: string[];
 };
 // The starting point is the one the design shows: 14 credits, Monday to Thursday, 9 to 4, short walks and a lunch break.
-export const DEFAULT_CONDITIONS: DigConditions = {credits: 14, days: [true, true, true, true, false], earliest: 540, latest: 960, prefer: {walks: true, lunch: true, days: false}};
+export const DEFAULT_CONDITIONS: DigConditions = {credits: 14, days: [true, true, true, true, false], earliest: 540, latest: 960, prefer: {walks: true, lunch: true, days: false}, breadths: []};
 export const CREDIT_LIMIT = 21;
 
 /** The request body the browser posts to /api/dig/generate. `mustCredits` is the total of the must-take courses. */
@@ -34,6 +36,7 @@ export function toDigBody(term: string, conditions: DigConditions, required: str
     latest: conditions.latest,
     blocked: DAYS.filter((_, day) => day > 4 || !conditions.days[day]),
     prefer: (Object.keys(conditions.prefer) as DigPrefer[]).filter((key) => conditions.prefer[key]),
+    preferred_breadths: conditions.breadths,
     related: true,
   };
 }
@@ -42,7 +45,8 @@ export function toDigBody(term: string, conditions: DigConditions, required: str
 export function conditionsChip(termLabel: string, conditions: DigConditions): string {
   const hour = (min: number) => hourLabel(min).replace(/ [AP]M$/, '');
   const days = conditions.days.flatMap((on, day) => (on ? [day] : []));
-  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}`;
+  const breadths = conditions.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code));
+  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}${breadths.length ? ` · ${breadths.join(', ')}` : ''}`;
 }
 
 /** Walking facts for one result, worked out next to the walking data and sent with the response. */

@@ -1,7 +1,8 @@
 import {readFileSync} from 'node:fs';
 import {afterEach, expect, test, vi} from 'vitest';
 import {assertNoUserData, callOptimizer, generateSchedules} from './optimizer';
-import {buildGenerateRequest} from './data/generate-request';
+import {buildGenerateRequest, buildSampleGenerateRequest} from './data/generate-request';
+import {DEFAULT_CONDITIONS, toDigBody} from './dig-view';
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`../../../../fixtures/${name}`, import.meta.url), 'utf8'));
 
@@ -29,6 +30,16 @@ test('mock switch yields empty and each error kind', async () => {
   expect((await generateSchedules('422')).kind).toBe('validation');
   expect((await generateSchedules('503')).kind).toBe('unavailable');
   expect((await generateSchedules('network')).kind).toBe('network');
+});
+
+test('live sample request carries selected breadth and the DIG constraints', () => {
+  const inputs = toDigBody('2027FA', {...DEFAULT_CONDITIONS, breadths: ['H']}, ['cs400', 'math234', 'stat240'], 10);
+  const built = buildSampleGenerateRequest(inputs);
+  if ('error' in built) throw new Error(built.error);
+  expect(built.term).toBe('2027FA');
+  expect(built.constraints).toMatchObject({min_credits: 13, max_credits: 14, blocked_days: ['FRI', 'SAT', 'SUN']});
+  expect(built.preferences).toMatchObject({preferred_breadths: ['H'], weights: {breadth: 1}});
+  expect(built.courses.find((course) => course.course_id === 'demo-breadth-h')?.breadth).toEqual(['H']);
 });
 
 // Opt-in: set OPTIMIZER_LIVE_URL=http://127.0.0.1:8000 to compare the running optimizer with the locked fixture.

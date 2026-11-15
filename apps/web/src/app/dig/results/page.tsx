@@ -236,7 +236,7 @@ function Recommendations() {
       <main style={s('position: relative; flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto')}>
         {run && !digging && options.length > 0 && <Deck key={run.id} run={run} options={options} term={term} />}
 
-        <Digging key={run?.id ?? 0} run={run} digging={digging} onCancel={() => {
+        <Digging key={`digging-${run?.id ?? 0}`} run={run} digging={digging} onCancel={() => {
           cancelDig();
           router.replace(setup);
         }} />

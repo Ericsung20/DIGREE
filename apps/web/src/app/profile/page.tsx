@@ -97,7 +97,6 @@ export default function ProfilePage() {
 
         <section className="rise" style={s('flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; animation-delay: 240ms')}>
           <h2 style={s(GROUP)}>Settings</h2>
-          <Link href="/friends/sharing" className="row" style={s(ROW + DIVIDER)}><span style={s('font-size: 15px; font-weight: 800')}>Schedule sharing</span><Svg size={18} sw={2.8} stroke="#8A847E">{ICON.right}</Svg></Link>
           <div style={s('min-height: 58px; padding: 0 10px 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #F1EEEA')}><span style={s('font-size: 15px; font-weight: 800')}>Chat notifications</span><Switch on={notify} label="Chat notifications" onToggle={() => writeStore(NOTIFY, !notify)} /></div>
           <button type="button" className="row" onClick={async () => {
             await signOut();

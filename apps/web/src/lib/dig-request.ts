@@ -9,7 +9,7 @@ type Day = S['Day'];
 
 export type DigPrefer = 'walks' | 'lunch' | 'days';
 const PREFER: DigPrefer[] = ['walks', 'lunch', 'days'];
-export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]; prefer?: DigPrefer[]; related?: boolean};
+export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]; prefer?: DigPrefer[]; preferredBreadths?: string[]; related?: boolean};
 
 const int = (v: unknown, min: number, max: number): number | null => {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
@@ -34,13 +34,17 @@ export function parseDigInputs(raw: unknown): DigInputs | {error: string} {
   if (!required || !blocked || !blocked.every((d) => (DAYS as string[]).includes(d))) return {error: 'Invalid course or day selection.'};
   const prefer = r.prefer === undefined ? undefined : strings(r.prefer);
   if (prefer === null || prefer?.some((p) => !(PREFER as string[]).includes(p))) return {error: 'Choose a valid scheduling preference.'};
+  const preferredBreadths = r.preferred_breadths === undefined ? undefined : strings(r.preferred_breadths);
+  if (preferredBreadths === null || (preferredBreadths && (preferredBreadths.length > 16 || preferredBreadths.some((code) => !code.trim())))) return {error: 'Choose valid breadth preferences.'};
   return {term: r.term, minCredits, maxCredits, required, earliest, latest, blockedDays: blocked as Day[],
-    ...(prefer !== undefined ? {prefer: prefer as DigPrefer[]} : {}), ...(r.related === true ? {related: true} : {})};
+    ...(prefer !== undefined ? {prefer: prefer as DigPrefer[]} : {}),
+    ...(preferredBreadths !== undefined ? {preferredBreadths: [...new Set(preferredBreadths.map((code) => code.trim().toUpperCase()))]} : {}),
+    ...(r.related === true ? {related: true} : {})};
 }
 
 /** Catalog rows for the candidate courses, as read from the database. */
 export type CatalogRows = {
-  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean}[];
+  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; breadth?: string[] | null}[];
   bundles: {course_id: string; bundle_id: string; seat_status: S['SectionBundle']['seat_status']; instructor_score: number | null}[];
   meetings: {course_id: string; bundle_id: string; day: Day; start_min: number; end_min: number; mode: S['Mode']; building_id: string | null}[];
   stats: {course_id: string; a_ab_rate: number; sample_size: number}[];
@@ -54,8 +58,9 @@ export type CatalogRows = {
  * "Short walks" and "Fewer days" raise their own weight. The optimizer has no lunch-break rule, so
  * "Lunch break" only stops it from penalizing a midday gap; the result cards flag days without one.
  */
-export function weightsFor(prefer: DigPrefer[]): S['Weights'] {
-  return {walking: prefer.includes('walks') ? 1 : 0.4, idle_gap: prefer.includes('lunch') ? 0.1 : 0.4, campus_days: prefer.includes('days') ? 1 : 0.4, grade_outcomes: 0, degree_fit: 0, instructor: 0};
+export function weightsFor(prefer: DigPrefer[], preferredBreadths: string[] = []): S['Weights'] {
+  return {walking: prefer.includes('walks') ? 1 : 0.4, idle_gap: prefer.includes('lunch') ? 0.1 : 0.4, campus_days: prefer.includes('days') ? 1 : 0.4, grade_outcomes: 0, degree_fit: 0, instructor: 0,
+    ...(preferredBreadths.length ? {breadth: 1} : {})};
 }
 
 /**
@@ -79,7 +84,7 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
       max_walk_per_transition_min: null,
       exclude_full_sections: false,
     },
-    preferences: {weights: weightsFor(inputs.prefer ?? [])},
+    preferences: {weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths), ...(inputs.preferredBreadths?.length ? {preferred_breadths: inputs.preferredBreadths} : {})},
     courses: rows.courses.map((c) => {
       const stat = rows.stats.find((s) => s.course_id === c.id);
       return {
@@ -91,6 +96,7 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
         already_completed: rows.completedCourseIds.includes(c.id),
         repeatable: c.repeatable,
         requirement_fit: null,
+        breadth: c.breadth ?? null,
         grade_stats: stat ? {a_ab_rate: Number(stat.a_ab_rate), sample_size: stat.sample_size} : null,
         section_bundles: rows.bundles
           .filter((b) => b.course_id === c.id)

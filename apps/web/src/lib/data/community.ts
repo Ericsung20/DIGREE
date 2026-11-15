@@ -172,20 +172,21 @@ export async function deleteComment(postId: string, id: string): Promise<string 
 
 type Vote = {score: number; my_vote: number};
 const NO_VOTE: Vote = {score: 0, my_vote: 0};
+const nonnegative = (vote: Vote): Vote => ({...vote, score: Math.max(0, vote.score)});
 export const useVote: (id: string) => Vote = IS_MOCK
-  ? (id) => useStore(`vote:${id}`, NO_VOTE)
+  ? (id) => nonnegative(useStore(`vote:${id}`, NO_VOTE))
   : (id) => useRemote(`vote:${id}`, NO_VOTE, async () => {
     const {data, error} = await supabase().rpc('community_vote_totals', {p_ids: [id]}).maybeSingle();
     if (error) throw error;
-    return data as Vote | null ?? NO_VOTE;
+    return nonnegative(data as Vote | null ?? NO_VOTE);
   });
 export async function setVote(id: string, value: -1 | 0 | 1): Promise<string | null> {
   if (IS_MOCK) {
-    writeStore(`vote:${id}`, {score: value, my_vote: value});
+    writeStore(`vote:${id}`, {score: Math.max(0, value), my_vote: value});
   } else {
     const {data, error} = await supabase().rpc('set_community_vote', {p_post: id, p_value: value}).single();
     if (error) return error.message;
-    setRemote(`vote:${id}`, data as Vote);
+    setRemote(`vote:${id}`, nonnegative(data as Vote));
   }
   return null;
 }
@@ -198,7 +199,7 @@ async function loadPostStats(ids: string[]): Promise<PostStats> {
   if (!ids.length) return NO_STATS;
   if (IS_MOCK) {
     const all = readStore(COMMENTS_KEY, SEED_COMMENTS);
-    return Object.fromEntries(ids.map((id) => [id, {...readStore(`vote:${id}`, NO_VOTE), comments: all.filter((comment) => comment.post_id === id).length}]));
+    return Object.fromEntries(ids.map((id) => [id, {...nonnegative(readStore(`vote:${id}`, NO_VOTE)), comments: all.filter((comment) => comment.post_id === id).length}]));
   }
   const db = supabase();
   const [votes, replies] = await Promise.all([
@@ -208,7 +209,7 @@ async function loadPostStats(ids: string[]): Promise<PostStats> {
   if (votes.error) throw votes.error;
   if (replies.error) throw replies.error;
   const stats: PostStats = Object.fromEntries(ids.map((id) => [id, {score: 0, my_vote: 0, comments: 0}]));
-  for (const vote of votes.data as (Vote & {post_id: string})[]) if (stats[vote.post_id]) Object.assign(stats[vote.post_id], {score: vote.score, my_vote: vote.my_vote});
+  for (const vote of votes.data as (Vote & {post_id: string})[]) if (stats[vote.post_id]) Object.assign(stats[vote.post_id], nonnegative(vote));
   for (const reply of replies.data as {post_id: string}[]) if (stats[reply.post_id]) stats[reply.post_id].comments++;
   return stats;
 }

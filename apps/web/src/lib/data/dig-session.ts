@@ -1,4 +1,5 @@
 import {DEFAULT_CONDITIONS, toDigBody, type DigConditions, type DigResponse} from '../dig-view';
+import {BREADTH_OPTIONS} from '../breadth';
 import {currentTermOf, type Term} from './catalog';
 import {setRemote, getRemote, useRemote, useStore, writeStore} from './local-store';
 
@@ -16,7 +17,9 @@ export function digTerm(terms: Term[], requested: string | null): string {
 export function useDigConditions(): DigConditions {
   const stored = useStore<DigConditions>(CONDITIONS, DEFAULT_CONDITIONS);
   // A value saved by an older build may be missing fields; start over rather than crash.
-  return Array.isArray(stored?.days) && stored.days.length === 5 && stored.prefer && Number.isInteger(stored.credits) ? stored : DEFAULT_CONDITIONS;
+  return Array.isArray(stored?.days) && stored.days.length === 5 && stored.prefer && Number.isInteger(stored.credits)
+    ? {...stored, breadths: Array.isArray(stored.breadths) ? stored.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code)) : []}
+    : DEFAULT_CONDITIONS;
 }
 export const saveDigConditions = (conditions: DigConditions) => writeStore(CONDITIONS, conditions);
 

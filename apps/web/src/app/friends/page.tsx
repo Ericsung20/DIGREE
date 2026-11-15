@@ -4,9 +4,7 @@ import Link from 'next/link';
 import {useState} from 'react';
 import {BackLink, EmptyNote, Frame, ICON, SR_ONLY, Svg} from '@/components/dg';
 import {initials} from '@/lib/data/account';
-import {acceptFriend, myFriendCode, removeFriend, sendFriendRequest, useFriends, useTheirVisibility, type Visibility} from '@/lib/data/friends';
-import {useRemote} from '@/lib/data/local-store';
-import {IS_MOCK} from '@/lib/supabase';
+import {acceptFriend, removeFriend, sendFriendRequest, useFriends} from '@/lib/data/friends';
 import {s} from '@/lib/ui/css';
 import {plural} from '@/lib/ui/format';
 import {personTone} from '@/lib/ui/palette';
@@ -28,7 +26,6 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 .field::placeholder{color:#8A847E}
 `;
 
-const SHARES: Record<Visibility, string> = {full: 'Full schedule', free_busy: 'Free / busy only', private: 'Not sharing yet'};
 const ROW = 'min-height: 68px; padding: 10px 12px; box-sizing: border-box; border-radius: 20px; text-decoration: none; color: #1D1B1A; display: flex; align-items: center; gap: 12px';
 
 function Avatar({id, name, size, sharing = true}: {id: string; name: string; size: number; sharing?: boolean}) {
@@ -38,8 +35,6 @@ function Avatar({id, name, size, sharing = true}: {id: string; name: string; siz
 
 export default function FriendsPage() {
   const friends = useFriends();
-  const theirs = useTheirVisibility(friends);
-  const myCode = useRemote<string | null>('my_friend_code', null, myFriendCode);
   const [input, setInput] = useState('');
   const [note, setNote] = useState<{text: string; error: boolean} | null>(null);
   const [fresh, setFresh] = useState<string | null>(null); // the friend just accepted pops into the list
@@ -51,9 +46,13 @@ export default function FriendsPage() {
   const list = [...accepted.filter((friend) => friend.id === fresh), ...accepted.filter((friend) => friend.id !== fresh)];
 
   async function send() {
-    const failure = await sendFriendRequest(input);
-    setNote(failure ? {text: failure, error: true} : {text: 'Request sent.', error: false});
-    if (!failure) setInput('');
+    try {
+      const failure = await sendFriendRequest(input);
+      setNote(failure ? {text: failure, error: true} : {text: 'Request sent. You can see each other’s schedules after they accept.', error: false});
+      if (!failure) setInput('');
+    } catch {
+      setNote({text: 'Couldn’t send the request. Try again.', error: true});
+    }
   }
 
   function answer(id: string, accept: boolean) {
@@ -69,9 +68,8 @@ export default function FriendsPage() {
   return (
     <Frame css={CSS}>
       <header style={s('flex-shrink: 0; padding: 8px 14px 4px 10px; display: flex; flex-direction: column; gap: 6px')}>
-        <div style={s('display: flex; align-items: center; justify-content: space-between; height: 44px')}>
+        <div style={s('display: flex; align-items: center; height: 44px')}>
           <BackLink href="/" label="Back to schedule" />
-          <Link href="/friends/sharing" className="press" style={s('height: 38px; padding: 0 14px; border-radius: 19px; background: #ECE8E3; color: #1D1B1A; text-decoration: none; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 800')}><Svg size={16} sw={2.4}>{ICON.lock}</Svg>Sharing</Link>
         </div>
         <h1 style={s('margin: 0; padding-left: 10px; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>Friends</h1>
       </header>
@@ -81,16 +79,18 @@ export default function FriendsPage() {
           event.preventDefault();
           void send();
         }} style={s('display: flex; flex-direction: column; gap: 8px; flex-shrink: 0')}>
-          <label style={s('position: relative; display: block')}>
-            <span style={s(SR_ONLY)}>Find friends</span>
-            <Svg size={18} sw={2.6} stroke="#6E6863" style={s('position: absolute; left: 16px; top: 16px')}>{ICON.search}</Svg>
-            <input className="field" type="text" autoComplete="off" enterKeyHint="send" placeholder={IS_MOCK ? 'Find by name or NetID' : 'Add by friend code'} value={input} onChange={(event) => {
-              setInput(event.target.value);
-              setNote(null);
-            }} />
-          </label>
+          <div style={s('display: flex; align-items: center; gap: 8px')}>
+            <label style={s('position: relative; display: block; flex: 1')}>
+              <span style={s(SR_ONLY)}>UW NetID</span>
+              <Svg size={18} sw={2.6} stroke="#6E6863" style={s('position: absolute; left: 16px; top: 16px')}>{ICON.search}</Svg>
+              <input className="field" type="text" autoComplete="off" enterKeyHint="send" placeholder="UW NetID" value={input} onChange={(event) => {
+                setInput(event.target.value);
+                setNote(null);
+              }} />
+            </label>
+            <button type="submit" className="press" aria-label="Send friend request" style={s('width: 50px; height: 50px; flex-shrink: 0; border: none; border-radius: 18px; background: #8C1D2B; color: #FFFFFF; font-size: 30px; line-height: 1; cursor: pointer')}>+</button>
+          </div>
           {note && <span role={note.error ? 'alert' : 'status'} style={s(`padding: 0 4px; font-size: 13px; font-weight: 700; color: ${note.error ? '#8C1D2B' : '#5F5A55'}`)}>{note.text}</span>}
-          {!IS_MOCK && !note && myCode && <span style={s('padding: 0 4px; font-size: 13px; font-weight: 700; color: #5F5A55; overflow-wrap: anywhere')}>Your friend code: <span style={s('user-select: all; font-weight: 800; color: #3D3936')}>{myCode}</span></span>}
         </form>
 
         {incoming.map((friend) => (
@@ -111,11 +111,10 @@ export default function FriendsPage() {
         <section className="rise" style={s('display: flex; flex-direction: column; gap: 6px; animation-delay: 80ms')}>
           <h2 style={s('margin: 0 0 4px 4px; font-size: 15px; font-weight: 800; color: #5F5A55')}>{plural(accepted.length, 'friend')}</h2>
           {list.map((friend) => {
-            const shares = theirs[friend.id] ?? 'private';
             return (
               <Link key={friend.id} href={`/friends/${encodeURIComponent(friend.id)}`} className={friend.id === fresh ? 'row pop' : 'row'} style={s(ROW)}>
-                <Avatar id={friend.id} name={friend.name} size={46} sharing={shares !== 'private'} />
-                <span style={s('flex: 1; display: flex; flex-direction: column')}><span style={s('font-size: 16px; font-weight: 900')}>{friend.name}</span><span style={s('font-size: 13px; font-weight: 700; color: #5F5A55')}>{friend.id === fresh ? 'Just added' : SHARES[shares]}</span></span>
+                <Avatar id={friend.id} name={friend.name} size={46} />
+                <span style={s('flex: 1; display: flex; flex-direction: column')}><span style={s('font-size: 16px; font-weight: 900')}>{friend.name}</span><span style={s('font-size: 13px; font-weight: 700; color: #5F5A55')}>{friend.id === fresh ? 'Just added' : 'Schedule available'}</span></span>
                 <Svg size={18} sw={2.6} stroke="#8A847E">{ICON.right}</Svg>
               </Link>
             );

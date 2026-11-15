@@ -38,23 +38,30 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   const plannedIds = await plannedCourseIds(db, inputs.term);
   if (plannedIds.length === 0) return {error: 'Add a must-take course for this term first.'};
   if (inputs.required.some((id) => !plannedIds.includes(id))) return {error: 'Your must-take courses changed. Go back to your conditions and dig again.'};
-  const catalog = await db.from('courses').select('id, code, credit_options, repeatable').in('id', plannedIds).order('code');
+  const catalog = await db.from('courses').select('id, code, credit_options, repeatable, breadth').in('id', plannedIds).order('code');
   if (catalog.error) throw catalog.error;
   const courses: CatalogRows['courses'] = catalog.data;
   const availableCredits = courses.reduce((total, course) => total + Math.max(...course.credit_options), 0);
-  if (inputs.related && availableCredits < inputs.minCredits) {
-    const subjects = [...new Set(courses.flatMap(({code}) => {
+  if ((inputs.related || inputs.preferredBreadths?.length) && availableCredits < inputs.minCredits) {
+    const preferred = inputs.preferredBreadths ?? [];
+    const breadthExtras = preferred.length ? await db.from('courses')
+      .select('id, code, credit_options, repeatable, breadth, section_bundles!inner(term)')
+      .overlaps('breadth', preferred).eq('section_bundles.term', inputs.term).neq('section_bundles.seat_status', 'full')
+      .order('code').limit(20) : null;
+    if (breadthExtras?.error) throw breadthExtras.error;
+    const subjects = inputs.related ? [...new Set(courses.flatMap(({code}) => {
       const subject = /^([A-Z &-]+) \d+[A-Z]?$/i.exec(code)?.[1];
       return subject ? [subject] : [];
-    }))].slice(0, 3);
+    }))].slice(0, 3) : [];
     const extras = await Promise.all(subjects.map(async (subject) => {
-      const {data, error} = await db.from('courses').select('id, code, credit_options, repeatable, section_bundles!inner(term)')
+      const {data, error} = await db.from('courses').select('id, code, credit_options, repeatable, breadth, section_bundles!inner(term)')
         .ilike('code', `${subject} %`).eq('section_bundles.term', inputs.term).neq('section_bundles.seat_status', 'full')
         .order('code').limit(12);
       if (error) throw error;
-      return data.map(({id, code, credit_options, repeatable}) => ({id, code, credit_options, repeatable}));
+      return data.map(({id, code, credit_options, repeatable, breadth}) => ({id, code, credit_options, repeatable, breadth}));
     }));
-    const unique = [...new Map(extras.flat().filter((course) => !plannedIds.includes(course.id)).map((course) => [course.id, course])).values()];
+    const preferredRows = (breadthExtras?.data ?? []).map(({id, code, credit_options, repeatable, breadth}) => ({id, code, credit_options, repeatable, breadth}));
+    const unique = [...new Map([...preferredRows, ...extras.flat()].filter((course) => !plannedIds.includes(course.id)).map((course) => [course.id, course])).values()];
     courses.push(...unique.slice(0, Math.max(0, 20 - (courses.length - inputs.required.length))));
   }
   const ids = courses.map(({id}) => id);

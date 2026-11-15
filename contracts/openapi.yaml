@@ -102,6 +102,11 @@ components:
         already_completed: {type: boolean}
         repeatable: {type: boolean}
         requirement_fit: {type: number, minimum: 0, maximum: 1, nullable: true}
+        breadth:
+          type: array
+          nullable: true
+          description: 'Catalog breadth codes for this course; null means unknown'
+          items: {type: string, minLength: 1}
         grade_stats:
           nullable: true
           allOf: [{$ref: '#/components/schemas/GradeStats'}]
@@ -135,12 +140,19 @@ components:
         grade_outcomes: {type: number, minimum: 0, maximum: 1}
         degree_fit: {type: number, minimum: 0, maximum: 1}
         instructor: {type: number, minimum: 0, maximum: 1}
+        breadth: {type: number, minimum: 0, maximum: 1, description: 'Preference for optional courses matching preferred_breadths'}
     Preferences:
       type: object
       additionalProperties: false
       required: [weights]
       properties:
         weights: {$ref: '#/components/schemas/Weights'}
+        preferred_breadths:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          description: 'Catalog breadth codes to favor, without excluding other courses'
+          items: {type: string, minLength: 1}
     WalkingEdge:
       type: object
       additionalProperties: false

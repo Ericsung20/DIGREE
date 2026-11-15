@@ -47,7 +47,7 @@ export default function FriendSchedulePage() {
   const planTerm = digTerm(terms, null);
   const [on, setOn] = useState(false);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const key = `${friendId}:${currentTerm}:${planTerm}:${friend?.theirVisibility}`;
+  const key = `${friendId}:${currentTerm}:${planTerm}:${friend?.status}`;
   const result = loaded?.key === key ? loaded : null;
 
   // A friend's shared schedule is their saved plan. Show the current term's, or the one they are planning next.
@@ -60,7 +60,7 @@ export default function FriendSchedulePage() {
         if (!term) continue;
         const view = await loadFriendSchedule(friend, term).catch((): FriendScheduleView => ({access: 'none'}));
         if (view.access !== 'none' && shown.view.access === 'none') shown = {term, view};
-        if (view.access === 'full' ? view.items.length : view.access === 'free_busy' && view.blocks.length) {
+        if (view.access === 'full' && view.items.length) {
           shown = {term, view};
           break;
         }
@@ -86,7 +86,7 @@ export default function FriendSchedulePage() {
   const myMeetings: Slot[] = mine.flatMap((course) => course.meetings);
 
   const view = result?.view;
-  const items = view?.access === 'full' ? view.items : view?.access === 'free_busy' ? [{label: 'Busy', meetings: view.blocks}] : [];
+  const items = view?.access === 'full' ? view.items : [];
   const theirs = items.flatMap((item) => item.meetings);
   const together = view?.access === 'full' ? view.items.filter((item) => mine.some((course) => course.code === item.label)) : [];
   const {start, end} = gridHours([...theirs, ...myMeetings]);
@@ -105,7 +105,7 @@ export default function FriendSchedulePage() {
   const access = view?.access ?? 'none';
   const summary = on
     ? best ? `Both free ${bestDays.join(' & ')}, ${timeOfDay(best.start).replace(/ [AP]M$/, '')}–${timeOfDay(best.end).replace(/ [AP]M$/, '')}` : 'No shared break this week'
-    : access === 'full' ? `${together.length} ${together.length === 1 ? 'class' : 'classes'} together` : 'Busy times only';
+    : access === 'full' ? `${together.length} ${together.length === 1 ? 'class' : 'classes'} together` : 'No schedule yet';
 
   return (
     <Frame css={CSS} numeric>
@@ -117,7 +117,7 @@ export default function FriendSchedulePage() {
           <span style={s(`width: 52px; height: 52px; border-radius: 26px; flex-shrink: 0; background: ${avatar.bg}; color: ${avatar.fg}; font-size: 18px; font-weight: 900; display: flex; align-items: center; justify-content: center`)}>{initials(friend?.name ?? '')}</span>
           <div style={s('display: flex; flex-direction: column; min-width: 0')}>
             <h1 style={s('margin: 0; font-size: 28px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>{friend?.name ?? 'Friend'}</h1>
-            <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{termLabel}{result ? ` · ${access === 'full' ? 'shares full schedule' : access === 'free_busy' ? 'shares free / busy only' : 'not sharing yet'}` : ''}</span>
+            <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{termLabel}</span>
           </div>
         </div>
         {access !== 'none' && (
@@ -157,8 +157,8 @@ export default function FriendSchedulePage() {
           <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 18px; height: 12px; box-sizing: border-box; border-radius: 4px; border: 1.5px dashed #1D1B1A')} />You</span>
           <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 18px; height: 12px; border-radius: 4px; background: #E3F0DA')} />Both free</span>
         </div>
-        {result && access === 'none' && <EmptyNote>{friend ? `${friend.name} isn’t sharing a schedule with you yet.` : 'This schedule isn’t available.'}</EmptyNote>}
-        {result && access !== 'none' && theirs.length === 0 && <EmptyNote>{friend?.name ?? 'Your friend'} hasn’t saved a plan for {termLabel} yet.</EmptyNote>}
+        {result && access === 'none' && <EmptyNote>{friend ? `${friend.name} hasn’t saved a schedule yet.` : 'This schedule isn’t available.'}</EmptyNote>}
+        {result && access !== 'none' && items.length === 0 && <EmptyNote>{friend?.name ?? 'Your friend'} hasn’t saved a schedule for {termLabel} yet.</EmptyNote>}
       </main>
     </Frame>
   );

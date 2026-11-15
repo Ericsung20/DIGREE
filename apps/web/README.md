@@ -30,11 +30,13 @@ See `.env.example` for the independent settings:
 | Data source | Optimizer | DIG behavior |
 | --- | --- | --- |
 | `NEXT_PUBLIC_DIGREE_DATA=mock` | `DIGREE_MOCK=1` | Sample schedule, saved in the browser |
-| `NEXT_PUBLIC_DIGREE_DATA=mock` | `DIGREE_MOCK=0` | Shared fixture sent to the configured optimizer |
+| `NEXT_PUBLIC_DIGREE_DATA=mock` | `DIGREE_MOCK=0` | Form conditions and synthetic breadth courses sent to the configured optimizer |
 | `NEXT_PUBLIC_DIGREE_DATA=supabase` | `DIGREE_MOCK=0` | Signed-in user’s planned courses sent to the optimizer; selected schedule saved to Supabase |
 | `NEXT_PUBLIC_DIGREE_DATA=supabase` | `DIGREE_MOCK=1` | Sample schedule preview while other screens use Supabase |
 
 For live DIG, start the optimizer, sign in, open DIG, add at least one **Must take** course for the term, then tap **Dig in**. Append `?mock=empty`, `?mock=503`, `?mock=422` or `?mock=network` to `/dig` to preview the empty and error screens when `DIGREE_MOCK=1`. If the Supabase project has no academic programs, users can go straight to Schedule. Self-reported enrollment and course chat require a term marked current in Supabase.
+
+The DIG form sends selected breadth codes as `preferred_breadths` in the posted conditions. In Supabase mode the server gathers matching course candidates and sends their `breadth` codes, the selected codes, and a breadth weight to the optimizer. In mock data mode with `DIGREE_MOCK=0`, synthetic courses let the local optimizer demonstrate the ranking change.
 
 ## Screens
 

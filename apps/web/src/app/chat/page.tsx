@@ -35,7 +35,6 @@ export default function ChatRoomsPage() {
           <h1 style={s('margin: 0; font-size: 32px; font-weight: 900; letter-spacing: -0.02em')}>Chat</h1>
           <AvatarLink />
         </div>
-        <p style={s('margin: 0; font-size: 14px; font-weight: 700; color: #5F5A55')}>Anonymous rooms for the classes you’re taking</p>
       </header>
 
       <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 16px; display: flex; flex-direction: column; gap: 10px')}>
@@ -61,7 +60,6 @@ export default function ChatRoomsPage() {
         {rooms === null && <EmptyNote role="alert">Couldn’t load your chats. Pull up this tab again in a moment.</EmptyNote>}
         {rooms?.length === 0 && <EmptyNote>No class chats yet. A room opens for each course you’re taking this term.</EmptyNote>}
 
-        {rooms !== undefined && <Link href="/onboarding/courses?from=chat" className="rise" style={s(`align-self: center; margin-top: 6px; min-height: 44px; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 800; color: #3D3936; text-decoration: none; animation-delay: ${40 + (rooms?.length ?? 0) * 60}ms`)}>Missing a class? Update what you’re taking</Link>}
       </main>
 
       <TabBar active="chat" />

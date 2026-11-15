@@ -13,11 +13,13 @@ test('toDigBody aims one credit under the target at most, blocks days off and th
   expect('error' in parseDigInputs(body)).toBe(false);
   // Must-takes that already exceed the target raise it instead of producing an impossible range.
   expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, credits: 8}, ['a', 'b', 'c'], 11)).toMatchObject({min_credits: 11, max_credits: 11});
+  expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, breadths: ['H', 'S']}, ['cs400'], 3).preferred_breadths).toEqual(['H', 'S']);
 });
 
 test('conditionsChip reads like the design: term, credits, days, hours', () => {
   expect(conditionsChip('Spring 2027', DEFAULT_CONDITIONS)).toBe('Spring 2027 · 14 cr · M–Th · 9–4');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, days: [true, false, true, false, true], earliest: 630})).toBe('Fall 2026 · 14 cr · M, W, F · 10:30–4');
+  expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, breadths: ['H']})).toContain(' · H');
 });
 
 test('walkChecks finds the longest single walk and matches the optimizer’s weekly totals', () => {
