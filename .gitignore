@@ -1,0 +1,29 @@
+# Dependencies / build output
+node_modules/
+.next/
+dist/
+build/
+coverage/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Sensitive student documents
+*DARS*.pdf
+
+
+/md file/
