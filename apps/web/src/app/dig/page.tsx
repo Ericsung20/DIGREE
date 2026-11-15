@@ -28,12 +28,14 @@ export default async function DigPage({searchParams}: PageProps<'/dig'>) {
     console.error('Loading DIG failed', error);
     return 'unavailable' as const;
   });
+  if (defaults && typeof defaults === 'object') {
+    return <DigClient key={defaults.term} defaults={defaults} canSave={!defaults.sample || IS_MOCK} mock={typeof mock === 'string' ? mock : undefined} />;
+  }
   return (
     <Screen title="DIG">
       {defaults === 'unavailable' && <EmptyState title="Couldn’t load DIG" body="Refresh the page to try again." />}
       {defaults === 'no-terms' && <EmptyState title="No terms available" body="A term must be in the catalog before you can build a schedule." />}
       {defaults === null && <EmptyState title="Sign in to use DIG" body="Your planned courses are needed to build schedules." />}
-      {defaults && typeof defaults === 'object' && <DigClient key={defaults.term} defaults={defaults} canSave={!defaults.sample || IS_MOCK} mock={typeof mock === 'string' ? mock : undefined} />}
     </Screen>
   );
 }

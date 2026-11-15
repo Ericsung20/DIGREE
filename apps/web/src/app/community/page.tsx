@@ -1,182 +1,73 @@
 'use client';
 
-import {useSearchParams} from 'next/navigation';
+import Link from 'next/link';
+import {useRouter, useSearchParams} from 'next/navigation';
 import {Suspense, useState} from 'react';
-import {Screen, field, primary, secondary} from '@/components/screen';
-import {COURSES, useCourseCodes} from '@/lib/data/catalog';
-import {addComment, addPost, deleteComment, deletePost, filterPosts, reportPost, updatePost, useComments, usePosts, type Post} from '@/lib/data/community';
-import {useCourseRecords} from '@/lib/data/course-records';
-import {IS_MOCK} from '@/lib/supabase';
-
-const link = 'text-sm text-accent focus-visible:outline-2 focus-visible:outline-accent';
-const when = (iso: string) => new Date(iso).toLocaleDateString([], {month: 'short', day: 'numeric'});
-// Database aliases look like "Student-<32 hex>"; a short prefix is enough to tell authors apart.
-const shortAlias = (alias: string) => (alias.startsWith('Student-') ? alias.slice(0, 14) : alias);
-
-function PostCard({post, tagLabel}: {post: Post; tagLabel: string}) {
-  const comments = useComments().filter((c) => c.post_id === post.id);
-  const [open, setOpen] = useState(false);
-  const [edit, setEdit] = useState<string | null>(null);
-  const [comment, setComment] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const run = async (action: Promise<string | null>) => {
-    const err = await action;
-    setError(err);
-    return err === null;
-  };
-  return (
-    <li className="rounded-xl border border-neutral-200 p-3">
-      <div className="flex items-center justify-between gap-2 text-xs text-neutral-600">
-        <span>
-          {shortAlias(post.public_alias)} · <time suppressHydrationWarning>{when(post.created_at)}</time>
-        </span>
-        <span className="rounded-md bg-sky-100 px-2 py-0.5 text-sky-900">{tagLabel}</span>
-      </div>
-      {edit === null ? (
-        <p className="mt-2 text-sm">{post.body}</p>
-      ) : (
-        <form
-          className="mt-2"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (edit.trim() && (await run(updatePost(post.id, edit)))) setEdit(null);
-          }}
-        >
-          <textarea aria-label="Edit post" value={edit} onChange={(e) => setEdit(e.target.value)} className={`${field} min-h-16`} />
-          <button type="submit" className={`${secondary} mt-2`}>
-            Save
-          </button>
-        </form>
-      )}
-      <div className="mt-2 flex gap-4">
-        <button type="button" className={link} aria-expanded={open} onClick={() => setOpen(!open)}>
-          {comments.length} {comments.length === 1 ? 'comment' : 'comments'}
-        </button>
-        {post.mine ? (
-          <>
-            <button type="button" className={link} onClick={() => setEdit(post.body)}>
-              Edit
-            </button>
-            <button type="button" className={link} onClick={() => run(deletePost(post.id))}>
-              Delete
-            </button>
-          </>
-        ) : (
-          <button type="button" className={link} onClick={() => run(reportPost(post.id))}>
-            Report
-          </button>
-        )}
-      </div>
-      {error && (
-        <p role="alert" className="mt-1 text-xs text-accent">
-          {error}
-        </p>
-      )}
-      {open && (
-        <div className="mt-2 border-t border-neutral-200 pt-2">
-          <ul>
-            {comments.map((c) => (
-              <li key={c.id} className="flex items-start justify-between gap-2 py-1.5 text-sm">
-                <span>
-                  <span className="block text-xs text-neutral-600">{shortAlias(c.public_alias)}</span>
-                  {c.body}
-                </span>
-                {c.mine && (
-                  <button type="button" className={link} onClick={() => run(deleteComment(c.id))}>
-                    Delete
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-          <form
-            className="mt-1 flex items-end gap-2"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (comment.trim() && (await run(addComment(post.id, comment)))) setComment('');
-            }}
-          >
-            <input aria-label="Add a comment" placeholder="Add a comment" value={comment} onChange={(e) => setComment(e.target.value)} className={field} />
-            <button type="submit" className={secondary}>
-              Send
-            </button>
-          </form>
-        </div>
-      )}
-    </li>
-  );
-}
+import {EmptyState, Screen, field, secondary} from '@/components/screen';
+import {PostLabels} from '@/components/post-labels';
+import {useCourseCodes} from '@/lib/data/catalog';
+import {FLAIRS, filterPosts, isFlair, postTitle, usePosts} from '@/lib/data/community';
 
 function Feed() {
-  const posts = usePosts();
-  const records = useCourseRecords();
-  // Course Detail links here with ?course=<id>.
-  const fromUrl = useSearchParams().get('course');
-  const [tag, setTag] = useState<string | null>(fromUrl || null);
+  const params = useSearchParams();
+  const router = useRouter();
+  const rawFlair = params.get('flair') ?? '';
+  const flair = isFlair(rawFlair) ? rawFlair : null;
+  const course = params.get('course');
   const [q, setQ] = useState('');
-  const [body, setBody] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const posts = usePosts();
+  const ids = posts.flatMap((post) => post.course_id ? [post.course_id] : []);
+  if (course) ids.push(course);
+  const codes = useCourseCodes(ids);
+  const shown = filterPosts(posts, {courseId: course, q, flair, courseCodes: codes});
+  const feedUrl = (category: string) => {
+    const query = new URLSearchParams();
+    if (course) query.set('course', course);
+    if (category) query.set('flair', category);
+    return query.size ? `/community?${query}` : '/community';
+  };
 
-  // Tag choices: the demo catalog in mock mode; in real mode, the courses in your own history.
-  const tagIds = [...new Set([...(IS_MOCK ? COURSES.map((c) => c.id) : records.map((r) => r.course_id)), ...(tag ? [tag] : [])])];
-  const codes = useCourseCodes([...tagIds, ...posts.flatMap((p) => (p.course_id ? [p.course_id] : []))]);
-  const label = (id: string | null) => (id === null ? 'General' : (codes[id] ?? id));
-  const shown = filterPosts(posts, {courseId: tag, q});
-  const chip = (id: string | null, text: string) => (
-    <button
-      key={id ?? 'all'}
-      type="button"
-      aria-pressed={tag === id}
-      onClick={() => setTag(id)}
-      className={`shrink-0 rounded-full px-3 py-1 text-xs focus-visible:outline-2 focus-visible:outline-accent ${tag === id ? 'bg-neutral-900 text-white' : 'bg-neutral-100'}`}
-    >
-      {text}
-    </button>
-  );
   return (
-    <>
-      <input type="search" aria-label="Search posts" placeholder="Search posts" value={q} onChange={(e) => setQ(e.target.value)} className={field} />
-      <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-        {chip(null, 'All')}
-        {tagIds.map((id) => chip(id, label(id)))}
-      </div>
-      <form
-        className="mt-3 rounded-xl border border-neutral-200 p-3"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (!body.trim()) return;
-          const err = await addPost(tag, body);
-          setError(err);
-          if (!err) setBody('');
-        }}
-      >
-        <textarea aria-label="New post" placeholder="Share a question or tip" value={body} onChange={(e) => setBody(e.target.value)} className={`${field} min-h-16`} />
-        {error && (
-          <p role="alert" className="mt-1 text-xs text-accent">
-            {error}
-          </p>
-        )}
-        <button type="submit" className={`${primary} mt-2 py-2.5`}>
-          Post to {label(tag)}
-        </button>
-        <p className="mt-2 text-xs text-neutral-600">Posts show an anonymous name, never your account.</p>
-      </form>
-      {shown.length === 0 && <p className="py-8 text-center text-sm text-neutral-600">No posts here yet. Be the first to post.</p>}
-      <ul className="mt-3 space-y-2">
-        {shown.map((p) => (
-          <PostCard key={p.id} post={p} tagLabel={label(p.course_id)} />
+    <Screen title="Community" actions={<Link className={secondary} href={`/community/new${course ? `?course=${encodeURIComponent(course)}` : ''}`}>New post</Link>}>
+      <input type="search" aria-label="Search posts" placeholder="Search questions, tips and courses" value={q} onChange={(e) => setQ(e.target.value)} className={field} />
+      <nav aria-label="Post flair" className="-mx-1 mt-2 flex gap-2 overflow-x-auto px-1 py-2">
+        {[['', 'All'], ...Object.entries(FLAIRS)].map(([value, label]) => (
+          <Link key={value} href={feedUrl(value)} scroll={false} aria-current={(flair ?? '') === value ? 'true' : undefined}
+            className="choice-chip shrink-0 aria-[current=true]:bg-neutral-900 aria-[current=true]:text-white">{label}</Link>
         ))}
-      </ul>
-    </>
+      </nav>
+      {ids.length > 0 && <label className="block text-xs font-extrabold">Course tag
+        <select aria-label="Filter by course tag" className={field} value={course ?? ''} onChange={(event) => {
+          const value = event.target.value;
+          const query = new URLSearchParams();
+          if (value) query.set('course', value);
+          if (flair) query.set('flair', flair);
+          router.push(query.size ? `/community?${query}` : '/community', {scroll: false});
+        }}>
+          <option value="">All courses</option>
+          {[...new Set(ids)].sort((a, b) => (codes[a] ?? a).localeCompare(codes[b] ?? b)).map((id) =>
+            <option key={id} value={id}>{codes[id] ?? id}</option>)}
+        </select>
+      </label>}
+      {course && <p className="my-2 text-sm">Course: <strong>{codes[course] ?? course}</strong> <Link className="ml-1 text-accent underline" href={flair ? `/community?flair=${flair}` : '/community'}>Clear</Link></p>}
+      {shown.length === 0 ? <EmptyState title="No posts found" body="Try another flair or search term." /> : (
+        <ul className="mt-2 space-y-3">
+          {shown.map((post) => (
+            <li key={post.id} className="surface space-y-2">
+              <PostLabels post={post} courseCode={post.course_id ? codes[post.course_id] : undefined} feedHref={feedUrl(flair ?? '')} />
+              <Link href={`/community/${post.id}?from=${encodeURIComponent(feedUrl(flair ?? ''))}`} className="block">
+                <h2 className="section-title break-words">{postTitle(post)}</h2>
+                {post.title && <p className="mt-1 line-clamp-2 wrap-anywhere text-sm text-neutral-600">{post.body}</p>}
+                <p className="mt-2 text-xs font-bold text-neutral-600">{post.public_alias.startsWith('Student-') ? post.public_alias.slice(0, 14) : post.public_alias}</p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Screen>
   );
 }
 
 export default function CommunityPage() {
-  return (
-    <Screen title="Community">
-      <Suspense>
-        <Feed />
-      </Suspense>
-    </Screen>
-  );
+  return <Suspense fallback={<Screen title="Community"><p role="status">Loading posts…</p></Screen>}><Feed /></Suspense>;
 }

@@ -44,4 +44,7 @@ test('community feed: tag filter, search, hides reported, newest first', () => {
   expect(filterPosts(all, {courseId: 'cs400', q: ''}).map((p) => p.id)).toEqual(['c', 'a']);
   expect(filterPosts(all, {courseId: null, q: 'lab'}).map((p) => p.id)).toEqual(['c', 'a']);
   expect(filterPosts(all, {courseId: 'math234', q: 'lab'})).toEqual([]);
+  const classified = [{...all[0], category: 'question', title: 'Office hours'}, {...all[1], category: 'tip'}];
+  expect(filterPosts(classified, {courseId: 'cs400', q: 'Office', flair: 'question'}).map((p) => p.id)).toEqual(['a']);
+  expect(filterPosts(classified, {courseId: 'cs400', q: 'lab', flair: 'tip'})).toEqual([]);
 });

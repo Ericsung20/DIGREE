@@ -36,6 +36,16 @@ $sql | docker exec -i supabase_db_DIGREE-db psql -X -U postgres -d postgres -v O
 
 Real term `1274` and sample term `2027SP` coexist. Reset loads the demo seed, and running the importer again restores the live sample. The importer refreshes bundles returned by UW but retains absent bundles and their meetings to preserve saved records. Seat status is a fetch-time snapshot. Unknown meeting data is excluded from schedulable bundles. Meeting dates, enrollment permissions, live seat refresh, and walking estimates for the new buildings are outside this import.
 
+For a term whose courses already exist in the destination, collect or refresh sections separately. This imports the published section labels and instructor display names without collecting instructor account identifiers or contact details.
+
+```powershell
+node supabase/import-uw-term.mjs 1272 catalog
+node supabase/import-uw-term.mjs 1272 sections
+./supabase/apply-uw-term.ps1 -Term 1272 -SectionsOnly
+```
+
+For the hosted database, add the existing `-ProjectRef` argument. The `sections-*.json` reports record unsuccessful fetches. Rerun the sections phase to retry those batches.
+
 Signed-in users can read historical course aggregates from `course_grade_stats`. Use `a_ab_rate` and `sample_size` for the optimizer's optional `grade_stats`, and use null when an aggregate is absent. The rate is the share of letter grades that were A or AB. The table holds course aggregates with a source URL and term coverage. Individual student grades remain in the owner-only `grade_entries` table.
 
 ## Import a full UW term

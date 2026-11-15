@@ -3,7 +3,8 @@ param(
     [ValidatePattern('^\d{4}$')]
     [string]$Term,
     [ValidatePattern('^[a-z0-9]{20}$')]
-    [string]$ProjectRef
+    [string]$ProjectRef,
+    [switch]$SectionsOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,10 +15,12 @@ $markerSuffix = if ($ProjectRef) { ".applied-$ProjectRef" } else { '.applied-loc
 
 Push-Location -LiteralPath $projectRoot
 try {
+    $pattern = if ($SectionsOnly) { '^sections-\d{3}\.sql$' } else { '^(catalog|detail)-\d{3}\.sql$' }
     $files = @(Get-ChildItem -LiteralPath $batchDirectory -Filter '*.sql' -File |
-        Where-Object { $_.Name -match '^(catalog|detail)-\d{3}\.sql$' } |
+        Where-Object { $_.Name -match $pattern } |
         Sort-Object -Property Name)
-    if (-not ($files.Name -match '^catalog-')) {
+    if ($SectionsOnly -and -not $files.Count) { throw "No section batches found for UW term $Term." }
+    if (-not $SectionsOnly -and -not ($files.Name -match '^catalog-')) {
         throw "No catalog batches found for UW term $Term."
     }
     foreach ($file in $files) {

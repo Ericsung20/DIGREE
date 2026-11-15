@@ -5,6 +5,7 @@ import {readStore, setRemote, useRemote, useStore, writeStore} from './local-sto
 export type PlannedSchedule = {term: string; selected: components['schemas']['SelectedBundle'][]};
 
 const KEY = 'digree.planned';
+const termKey = (term: string) => `${KEY}:${term}`;
 const PLAN_NAME = 'DIG plan · ';
 type StoredPlan = PlannedSchedule & {id?: string};
 type Selected = PlannedSchedule['selected'][number];
@@ -21,23 +22,29 @@ export function readScheduleItems(items: unknown): Selected[] {
   })).sort((a, b) => a.course_code.localeCompare(b.course_code));
 }
 
-async function loadPlan(): Promise<StoredPlan | null> {
+async function loadPlan(term: string): Promise<StoredPlan | null> {
   const db = supabase();
   const {data: auth} = await db.auth.getUser();
   if (!auth.user) return null;
   const {data, error} = await db.from('saved_schedules')
     .select(`id, term, saved_schedule_items!inner(${SAVED_ITEMS})`)
-    .eq('user_id', auth.user.id).eq('mode', 'planned').like('name', `${PLAN_NAME}%`)
+    .eq('user_id', auth.user.id).eq('term', term).eq('mode', 'planned').like('name', `${PLAN_NAME}%`)
     .order('name', {ascending: false}).order('id').limit(1).maybeSingle();
   if (error) throw error;
   if (!data) return null;
   return {id: data.id, term: data.term, selected: readScheduleItems(data.saved_schedule_items)};
 }
 
-export const usePlannedSchedule: () => StoredPlan | null = IS_MOCK ? () => useStore(KEY, null) : () => useRemote(KEY, null, loadPlan);
+export const usePlannedSchedule: (term: string) => StoredPlan | null = IS_MOCK
+  ? (term) => {
+    const legacy = useStore<StoredPlan | null>(KEY, null);
+    const plan = useStore<StoredPlan | null>(termKey(term), null);
+    return plan ?? (legacy?.term === term ? legacy : null);
+  }
+  : (term) => useRemote(termKey(term), null, () => term ? loadPlan(term) : Promise.resolve(null));
 
 export async function savePlannedSchedule(plan: PlannedSchedule, requestId: string): Promise<void> {
-  if (IS_MOCK) return writeStore(KEY, plan);
+  if (IS_MOCK) return writeStore(termKey(plan.term), plan);
   const db = supabase();
   const {data: auth} = await db.auth.getUser();
   if (!auth.user) throw new Error('Sign in to save a schedule.');
@@ -62,29 +69,32 @@ export async function savePlannedSchedule(plan: PlannedSchedule, requestId: stri
     await db.from('saved_schedules').delete().eq('id', id).eq('user_id', owner);
     throw removed.error;
   }
-  setRemote(KEY, {...plan, id});
+  setRemote(termKey(plan.term), {...plan, id});
 }
 
 export async function deletePlannedSchedule(plan: StoredPlan): Promise<void> {
-  if (IS_MOCK) return writeStore(KEY, null);
+  if (IS_MOCK) {
+    if (readStore<StoredPlan | null>(KEY, null)?.term === plan.term) writeStore(KEY, null);
+    return writeStore(termKey(plan.term), null);
+  }
   if (!plan.id) return;
   const {error} = await supabase().from('saved_schedules').delete().eq('id', plan.id);
   if (error) throw error;
-  setRemote(KEY, null);
+  setRemote(termKey(plan.term), null);
   try {
-    setRemote(KEY, await loadPlan());
+    setRemote(termKey(plan.term), await loadPlan(plan.term));
   } catch (error) {
     console.warn('Loading the next plan failed', error);
   }
 }
 
 export async function removePlannedCourse(plan: StoredPlan, courseId: string): Promise<void> {
-  if (IS_MOCK) plan = readStore<PlannedSchedule | null>(KEY, null) ?? plan;
+  if (IS_MOCK) plan = readStore(termKey(plan.term), plan);
   const selected = plan.selected.filter((s) => s.course_id !== courseId);
   if (!selected.length) return deletePlannedSchedule(plan);
-  if (IS_MOCK) return writeStore(KEY, {...plan, selected});
+  if (IS_MOCK) return writeStore(termKey(plan.term), {...plan, selected});
   if (!plan.id) return;
   const {error} = await supabase().from('saved_schedule_items').delete().eq('schedule_id', plan.id).eq('course_id', courseId);
   if (error) throw error;
-  setRemote(KEY, {...plan, selected});
+  setRemote(termKey(plan.term), {...plan, selected});
 }

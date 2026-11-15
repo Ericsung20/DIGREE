@@ -1,20 +1,19 @@
 'use client';
 
-import Link from 'next/link';
 import {useParams} from 'next/navigation';
 import {useRef, useState} from 'react';
-import {EmptyState, Screen, field, secondary} from '@/components/screen';
+import {EmptyState, Screen, field, primary} from '@/components/screen';
 import type {ChatRoom} from '@/lib/data/chat';
 import {useChatRooms, useChatThread} from '@/lib/data/chat-live';
 import {useCourseRecords, type CourseRecord} from '@/lib/data/course-records';
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+const backToChat = {href: '/chat', label: 'Back to chats'};
 
 function ChatUnavailable({denied}: {denied: boolean}) {
   return (
-    <Screen title="Chat">
+    <Screen title="Chat" back={backToChat}>
       <EmptyState title={denied ? "You're not in this chat" : 'Couldn’t load chat'} body={denied ? 'Chats are limited to courses you report taking this term.' : 'Refresh the page to try again.'} />
-      <Link href="/chat" className={secondary}>Back to chats</Link>
     </Screen>
   );
 }
@@ -28,16 +27,16 @@ function Conversation({room, records}: {room: ChatRoom; records: CourseRecord[]}
   if (status === 'error' || status === 'denied') return <ChatUnavailable denied={status === 'denied'} />;
 
   return (
-    <Screen title={room.course_code}>
-      <p className="text-xs text-neutral-600">
-        {room.participant_count + Number(!room.my_alias && !!alias)} here{alias && ' · You are ' + alias} · Self-reported course membership
+    <Screen title={room.course_code} back={backToChat}>
+      <p className="surface text-sm font-bold text-neutral-600">
+        {room.participant_count + Number(!room.my_alias && !!alias)} here{alias && ' · You are ' + alias} · Based on courses members enter themselves
       </p>
       {status === 'loading' && <p role="status" className="py-8 text-center text-sm text-neutral-600">Loading messages…</p>}
       {status === 'ready' && messages.length === 0 && <p className="py-8 text-center text-sm text-neutral-600">No messages yet. Say hello.</p>}
-      <ul className="mt-3 space-y-2" aria-live="polite">
+      <ul className="mt-4 flex flex-col gap-2.5" aria-live="polite">
         {messages.map((m) => (
-          <li key={m.id} className={`rounded-xl px-3 py-2 text-sm ${m.mine ? 'ml-10 bg-sky-100 text-sky-900' : 'mr-10 bg-neutral-100'}`}>
-            <span className="block text-xs opacity-80">
+          <li key={m.id} className={`max-w-[85%] rounded-[20px] px-3.5 py-2.5 text-sm wrap-anywhere shadow-card ${m.mine ? 'self-end rounded-br-md bg-sky-100 text-sky-900' : 'self-start rounded-bl-md bg-white'}`}>
+            <span className="mb-0.5 block text-xs font-extrabold opacity-80">
               {m.alias} · <time dateTime={m.created_at} suppressHydrationWarning>{time(m.created_at)}</time>
             </span>
             {m.body}
@@ -50,7 +49,7 @@ function Conversation({room, records}: {room: ChatRoom; records: CourseRecord[]}
         ))}
       </ul>
       <form
-        className="mt-3 flex items-end gap-2"
+        className="mt-4 flex items-end gap-2"
         onSubmit={async (event) => {
           event.preventDefault();
           if (busy.current) return;
@@ -67,7 +66,7 @@ function Conversation({room, records}: {room: ChatRoom; records: CourseRecord[]}
         }}
       >
         <input aria-label="Message" placeholder="Message" value={text} onChange={(e) => setText(e.target.value)} autoComplete="off" className={field} disabled={sending || status !== 'ready'} />
-        <button type="submit" className={secondary} disabled={sending || status !== 'ready' || !text.trim()}>
+        <button type="submit" className={`${primary} max-w-fit shrink-0`} disabled={sending || status !== 'ready' || !text.trim()}>
           {sending ? 'Sending…' : 'Send'}
         </button>
       </form>
@@ -80,7 +79,7 @@ export default function ChatRoomPage() {
   const {roomId} = useParams<{roomId: string}>();
   const records = useCourseRecords();
   const rooms = useChatRooms(records);
-  if (rooms === undefined) return <Screen title="Chat"><p role="status">Loading chat…</p></Screen>;
+  if (rooms === undefined) return <Screen title="Chat" back={backToChat}><p role="status" className="surface">Loading chat…</p></Screen>;
   const room = rooms?.find((candidate) => candidate.room_id === roomId);
   return room ? <Conversation key={roomId} room={room} records={records} /> : <ChatUnavailable denied={rooms !== null} />;
 }

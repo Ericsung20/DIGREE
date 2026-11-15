@@ -4,8 +4,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { asSql, getJson, normalizePackage, gradeStats, enroll } from './import-uw-catalog.mjs';
 
 const [, , termCode = '1274', phase = 'catalog'] = process.argv;
-if (!/^\d{4}$/.test(termCode) || !['catalog', 'detail'].includes(phase)) {
-  throw new Error('Usage: node supabase/import-uw-term.mjs TERM catalog|detail');
+if (!/^\d{4}$/.test(termCode) || !['catalog', 'detail', 'sections'].includes(phase)) {
+  throw new Error('Usage: node supabase/import-uw-term.mjs TERM catalog|detail|sections');
 }
 const directory = resolve(import.meta.dirname, '.temp', 'uw-' + termCode);
 const manifestPath = join(directory, 'manifest.json');
@@ -108,4 +108,39 @@ async function details() {
     console.log('Detail batch ' + number + ': ' + packages.length + ' bundles, ' + stats.length + ' grade stats, ' + failed.length + ' errors');
   }
 }
-await (phase === 'catalog' ? catalog() : details());
+
+async function sections() {
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const batchSize = 100;
+  for (let offset = 0; offset < manifest.entries.length; offset += batchSize) {
+    const number = String(offset / batchSize + 1).padStart(3, '0');
+    const path = join(directory, 'sections-' + number + '.sql');
+    const reportPath = join(directory, 'sections-' + number + '.json');
+    const previous = await readIfPresent(reportPath);
+    if (previous && JSON.parse(previous).failed.length === 0 && await readIfPresent(path) !== null) continue;
+    const entries = manifest.entries.slice(offset, offset + batchSize);
+    const packages = [], buildings = new Map(), failed = [];
+    let skipped = 0;
+    await Promise.all(Array.from({length: 8}, (_, index) => (async () => {
+      await delay(index * 100);
+      for (const hit of entries.filter((_, position) => position % 8 === index)) {
+        try {
+          const raw = await getJson(enroll + '/enrollmentPackages/' + termCode + '/' + hit.subject.subjectCode + '/' + hit.courseId);
+          const normalized = raw.map((pack) => normalizePackage(pack, hit.course, buildings)).filter(Boolean);
+          packages.push(...new Map(normalized.map((row) => [row.bundle_id, row])).values());
+          skipped += raw.length - normalized.length;
+        } catch (error) {
+          failed.push({course: hit.course.code, reason: error.code ?? error.name});
+        }
+        await delay(450);
+      }
+    })()));
+    await writeAtomic(path, asSql({term: manifest.term, courses: [], packages, stats: [], buildings: [...buildings.values()]}));
+    await writeAtomic(reportPath, JSON.stringify({courses: entries.length, bundles: packages.length, skipped, failed}));
+    console.log('Section batch ' + number + ': ' + packages.length + ' bundles, ' + failed.length + ' errors');
+  }
+}
+
+if (phase === 'catalog') await catalog();
+else if (phase === 'sections') await sections();
+else await details();

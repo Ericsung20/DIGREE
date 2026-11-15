@@ -1,51 +1,37 @@
 'use client';
 
+import Link from 'next/link';
 import {useState} from 'react';
-import {Screen, field, secondary} from '@/components/screen';
-import {WeeklyTimetable} from '@/components/weekly-timetable';
-import {currentTermOf, useTerms} from '@/lib/data/catalog';
-import {VISIBILITY_LABEL, acceptFriend, loadFriendSchedule, myFriendCode, removeFriend, sendFriendRequest, setMyVisibility, useFriends, type Friend, type FriendScheduleView, type Visibility} from '@/lib/data/friends';
+import {Chevron, Screen, field, secondary} from '@/components/screen';
+import {acceptFriend, myFriendCode, removeFriend, sendFriendRequest, useFriends} from '@/lib/data/friends';
 import {useRemote} from '@/lib/data/local-store';
 import {IS_MOCK} from '@/lib/supabase';
 
 const link = 'text-sm text-accent focus-visible:outline-2 focus-visible:outline-accent';
-const row = 'flex items-center justify-between gap-2 border-b border-neutral-200 py-2.5 text-sm';
+const row = 'surface flex flex-wrap items-center justify-between gap-2 text-sm';
 
 export default function FriendsPage() {
   const friends = useFriends();
-  const terms = useTerms();
-  const term = currentTermOf(terms) ?? terms.at(-1)?.id ?? null;
   const myCode = useRemote<string | null>('my_friend_code', null, myFriendCode);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<{id: string; view: FriendScheduleView | null} | null>(null);
 
   const pending = friends.filter((f) => f.status !== 'accepted');
   const accepted = friends.filter((f) => f.status === 'accepted');
-  const shown = accepted.find((f) => f.id === open?.id); // closes by itself when the friend is removed
   const run = async (action: Promise<string | null>) => setError(await action);
 
-  async function toggle(f: Friend) {
-    if (open?.id === f.id) return setOpen(null);
-    setOpen({id: f.id, view: null});
-    const view = await loadFriendSchedule(f, term);
-    setOpen((now) => (now?.id === f.id ? {id: f.id, view} : now));
-  }
-
   return (
-    <Screen title="Friends">
-      <p className="text-xs text-neutral-600">Schedules are private until you share them. GPA is never shared.</p>
-
+    <Screen title="Friends" back={{href: '/', label: 'Back to schedule'}} description="Schedules are private until you share them. GPA is never shared.">
       {!IS_MOCK && (
-        <div className="mt-3 rounded-xl bg-neutral-100 p-3 text-xs">
+        <div className="surface mt-3 text-xs">
           <p className="text-neutral-600">Your friend code. Share it so a friend can send you a request.</p>
           <p className="mt-1 select-all break-all font-mono">{myCode ?? '…'}</p>
         </div>
       )}
 
-      <h2 className="mt-4 text-sm font-semibold">Requests</h2>
+      <h2 className="section-title mt-4 mb-2">Requests</h2>
       {pending.length === 0 && <p className="py-2 text-sm text-neutral-600">No pending requests.</p>}
-      <ul>
+      <ul className="space-y-2">
         {pending.map((f) => (
           <li key={f.id} className={row}>
             <span className="font-semibold">{f.name}</span>
@@ -70,7 +56,7 @@ export default function FriendsPage() {
         ))}
       </ul>
       <form
-        className="mt-2 flex items-end gap-2"
+        className="surface mt-2 flex flex-wrap items-end gap-2"
         onSubmit={async (e) => {
           e.preventDefault();
           const err = await sendFriendRequest(input);
@@ -78,11 +64,11 @@ export default function FriendsPage() {
           if (!err) setInput('');
         }}
       >
-        <label className="block flex-1 text-xs text-neutral-600">
+        <label className="block min-w-28 flex-1 text-sm font-extrabold">
           {IS_MOCK ? 'Add a friend' : "Add a friend by their code"}
           <input name="friend" value={input} onChange={(e) => setInput(e.target.value)} placeholder={IS_MOCK ? 'Name' : 'Friend code'} autoComplete="off" className={field} />
         </label>
-        <button type="submit" className={secondary}>
+        <button type="submit" className={`${secondary} min-h-12`}>
           Send request
         </button>
       </form>
@@ -92,57 +78,26 @@ export default function FriendsPage() {
         </p>
       )}
 
-      <h2 className="mt-6 text-sm font-semibold">Your friends</h2>
+      <h2 className="section-title mt-6 mb-2">Your friends</h2>
       {accepted.length === 0 && <p className="py-2 text-sm text-neutral-600">No friends yet.</p>}
-      <ul>
+      <ul className="space-y-2">
         {accepted.map((f) => (
-          <li key={f.id} className="border-b border-neutral-200 py-2.5 text-sm">
+          <li key={f.id} className="surface text-sm">
             <div className="flex items-center justify-between gap-2">
-              <button type="button" aria-expanded={open?.id === f.id} onClick={() => toggle(f)} className="font-semibold focus-visible:outline-2 focus-visible:outline-accent">
-                {f.name}
-              </button>
+              <Link href={`/friends/${encodeURIComponent(f.id)}`} className="flex min-h-11 min-w-0 items-center gap-2.5 rounded-xl text-left font-black">
+                <span aria-hidden="true" className="grid size-10 shrink-0 place-items-center rounded-full bg-violet-100 text-violet-900">{f.name.trim().slice(0, 1).toUpperCase()}</span>
+                <span className="wrap-anywhere">{f.name}</span>
+                <span className="shrink-0 text-neutral-500"><Chevron /></span>
+              </Link>
               <button type="button" className={link} onClick={() => run(removeFriend(f.id))}>
                 Remove
               </button>
             </div>
-            <label className="mt-1 flex items-center gap-2 text-xs text-neutral-600">
-              {f.name} can see
-              <select
-                aria-label={`What ${f.name} can see`}
-                value={f.myVisibility}
-                onChange={(e) => run(setMyVisibility(f.id, e.target.value as Visibility))}
-                className="rounded-lg border border-neutral-300 bg-white px-1.5 py-1 text-xs text-neutral-900"
-              >
-                {(Object.keys(VISIBILITY_LABEL) as Visibility[]).map((v) => (
-                  <option key={v} value={v}>
-                    {VISIBILITY_LABEL[v]}
-                  </option>
-                ))}
-              </select>
-            </label>
           </li>
         ))}
       </ul>
 
-      {shown && open && (
-        <section aria-label={`${shown.name}'s schedule`} className="mt-4 rounded-xl border border-neutral-200 p-3">
-          <h2 className="text-sm font-semibold">{shown.name}</h2>
-          {open.view === null && <p className="py-4 text-center text-sm text-neutral-600">Loading…</p>}
-          {open.view?.access === 'none' && <p className="py-4 text-center text-sm text-neutral-600">{shown.name} hasn&apos;t shared a schedule with you.</p>}
-          {open.view?.access === 'free_busy' && (
-            <>
-              <p className="mb-2 text-xs text-neutral-600">Free/busy only. Course names are hidden.</p>
-              <WeeklyTimetable items={[{label: 'Busy', meetings: open.view.blocks}]} />
-            </>
-          )}
-          {open.view?.access === 'full' && (
-            <>
-              <p className="mb-2 text-xs text-neutral-600">Full schedule, shared by {shown.name}. Self-reported, not verified by UW.</p>
-              <WeeklyTimetable items={open.view.items} />
-            </>
-          )}
-        </section>
-      )}
+      <Link href="/friends/sharing" className={`${secondary} mt-4 w-full`}>Sharing settings</Link>
     </Screen>
   );
 }

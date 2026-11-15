@@ -51,7 +51,13 @@ function campusMinute(milliseconds, end = false) {
 function normalizePackage(pack, course, buildings) {
   if (pack.published !== true || !pack.docId || !pack.sections?.length) return null;
   const meetings = new Map();
+  const instructors = new Set();
+  const sections = [];
   for (const section of pack.sections) {
+    if (section.type && section.sectionNumber) sections.push(`${section.type} ${section.sectionNumber}`);
+    for (const instructor of section.instructors ?? []) {
+      if (typeof instructor.name === 'string' && instructor.name.trim()) instructors.add(instructor.name.trim());
+    }
     const classes = (section.classMeetings ?? []).filter(meeting => meeting.meetingType === 'CLASS');
     const mode = section.instructionMode ?? '';
     if (/asynchronous/i.test(mode) && !classes.some(row => row.meetingTimeStart != null)) continue;
@@ -77,6 +83,8 @@ function normalizePackage(pack, course, buildings) {
   return {
     term: termCode, course_id: course.id, bundle_id: pack.docId,
     seat_status: seatStatuses[pack.packageEnrollmentStatus?.status] ?? 'unknown',
+    section_label: sections.join(' + ') || null,
+    instructors: [...instructors],
     meetings: [...meetings.values()],
   };
 }
@@ -162,7 +170,9 @@ create temp table catalog_import (payload jsonb) on commit drop;
 insert into catalog_import values ('${json}'::jsonb);
 
 insert into public.terms (id, label)
-select payload->'term'->>'id', payload->'term'->>'label' from catalog_import
+select payload->'term'->>'id',
+    regexp_replace(regexp_replace(payload->'term'->>'label', '^(Fall) ([0-9]{4})-[0-9]{4}$', '\\1 \\2'), '^(Spring|Summer) [0-9]{4}-([0-9]{4})$', '\\1 \\2')
+from catalog_import
 on conflict (id) do update set label = excluded.label;
 
 insert into public.courses (id, code, title, credit_options, breadth, repeatable, source, fetched_at)
@@ -179,11 +189,13 @@ on conflict (id) do update set name = coalesce(excluded.name, buildings.name);
 
 create temp table catalog_packages on commit drop as
 select row.* from catalog_import cross join lateral jsonb_to_recordset(payload->'packages')
-    as row(term text, course_id text, bundle_id text, seat_status public.seat_status, meetings jsonb);
+    as row(term text, course_id text, bundle_id text, seat_status public.seat_status, section_label text, instructors text[], meetings jsonb);
 
-insert into public.section_bundles (term, course_id, bundle_id, seat_status)
-select term, course_id, bundle_id, seat_status from catalog_packages
-on conflict (term, course_id, bundle_id) do update set seat_status = excluded.seat_status;
+insert into public.section_bundles (term, course_id, bundle_id, seat_status, section_label, instructors)
+select term, course_id, bundle_id, seat_status, section_label, coalesce(instructors, '{}') from catalog_packages
+on conflict (term, course_id, bundle_id) do update set seat_status = excluded.seat_status,
+    section_label = coalesce(excluded.section_label, section_bundles.section_label),
+    instructors = case when cardinality(excluded.instructors) > 0 then excluded.instructors else section_bundles.instructors end;
 
 delete from public.meetings as meeting using catalog_packages as package
 where (meeting.term, meeting.course_id, meeting.bundle_id) = (package.term, package.course_id, package.bundle_id);

@@ -20,7 +20,7 @@ export function AcademicProfileForm({submitLabel, onSaved}: {submitLabel: string
   const v = draft ?? (savedProgram ? {college_id: savedProgram.college_id, label: savedProgram.label, program_id: savedProgram.id} : EMPTY);
   const programs = options.filter((p) => p.college_id === v.college_id);
   const majors = [...new Set(programs.map((p) => p.label))];
-  const years = programs.filter((p) => p.label === v.label);
+  const years = programs.filter((p) => p.label === v.label).sort((a, b) => b.catalog_year - a.catalog_year);
   const chosen = years.find((p) => p.id === v.program_id);
   const change = (next: Draft) => {
     setDraft(next);
@@ -33,7 +33,7 @@ export function AcademicProfileForm({submitLabel, onSaved}: {submitLabel: string
 
   return (
     <form
-      className="space-y-3"
+      className="surface space-y-4"
       onSubmit={async (e) => {
         e.preventDefault();
         if (!chosen || busy) return;
@@ -50,7 +50,7 @@ export function AcademicProfileForm({submitLabel, onSaved}: {submitLabel: string
         }
       }}
     >
-      <label className="block text-xs text-neutral-600">
+      <label className="block text-sm font-extrabold">
         College
         {/* Changing the college clears the major and year, so they can never mismatch. */}
         <select name="college" required value={v.college_id} onChange={(e) => change({college_id: e.target.value, label: '', program_id: ''})} className={field}>
@@ -62,7 +62,7 @@ export function AcademicProfileForm({submitLabel, onSaved}: {submitLabel: string
           ))}
         </select>
       </label>
-      <label className="block text-xs text-neutral-600">
+      <label className="block text-sm font-extrabold">
         Major
         <select name="major" required disabled={!v.college_id} value={v.label} onChange={(e) => change({...v, label: e.target.value, program_id: ''})} className={field}>
           <option value="">{v.college_id ? 'Select a major' : 'Pick a college first'}</option>
@@ -73,13 +73,13 @@ export function AcademicProfileForm({submitLabel, onSaved}: {submitLabel: string
           ))}
         </select>
       </label>
-      <label className="block text-xs text-neutral-600">
+      <label className="block text-sm font-extrabold">
         Catalog year
         <select name="catalog_year" required disabled={!v.label} value={v.program_id} onChange={(e) => change({...v, program_id: e.target.value})} className={field}>
           <option value="">{v.label ? 'Select a year' : 'Pick a major first'}</option>
           {years.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.catalog_year}
+              {p.catalog_year}–{String(p.catalog_year + 1).slice(-2)}
             </option>
           ))}
         </select>

@@ -6,12 +6,13 @@ import {TabBar} from '@/components/tab-bar';
 export const metadata: Metadata = {
   title: 'DIGREE',
   description: 'Schedule-first student planning',
+  icons: {icon: '/digree-icon.svg'},
 };
 
 export default function RootLayout({children}: LayoutProps<'/'>) {
   return (
     <html lang="en">
-      <body className="bg-white text-neutral-900 antialiased sm:bg-neutral-50">
+      <body className="antialiased">
         <OnboardingGate />
         {children}
         <TabBar />

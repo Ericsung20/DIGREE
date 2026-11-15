@@ -1,9 +1,9 @@
 'use client';
 
-import {useRef, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import {field, primary} from '@/components/screen';
 import {COURSES, currentTermOf, getBundles, searchCourses, useTerms, type Bundle, type CourseHit} from '@/lib/data/catalog';
-import {STATUS_LABEL, addCourseRecord, removeCourseRecord, useCourseRecords, type CourseRecordStatus} from '@/lib/data/course-records';
+import {STATUS_LABEL, addCourseRecord, changeCourseSection, removeCourseRecord, useCourseRecords, type CourseRecord, type CourseRecordStatus} from '@/lib/data/course-records';
 
 const BADGE: Record<CourseRecordStatus, string> = {
   completed: 'bg-neutral-100 text-neutral-900',
@@ -13,7 +13,7 @@ const BADGE: Record<CourseRecordStatus, string> = {
 };
 
 /** Add and remove course records per term. Used in onboarding and Profile. */
-export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
+export function CourseHistory({planTerm, initialTerm, onlyTerm = false, initialCourse}: {planTerm?: string; initialTerm?: string; onlyTerm?: boolean; initialCourse?: string} = {}) {
   const records = useCourseRecords();
   const terms = useTerms();
   const currentTerm = currentTermOf(terms);
@@ -27,9 +27,10 @@ export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
   const [busy, setBusy] = useState(false);
   const latest = useRef(0); // drops answers to searches the user has already typed past
 
-  const term = pickedTerm || terms.find((t) => t.id === planTerm)?.id || currentTerm || terms.at(-1)?.id || '';
+  const term = pickedTerm || terms.find((t) => t.id === (planTerm ?? initialTerm))?.id || currentTerm || terms.at(-1)?.id || '';
   // Self-reported enrollment only exists for the current term.
-  const statuses: CourseRecordStatus[] = term === currentTerm ? ['enrolled_self_reported', 'planned', 'completed'] : ['planned', 'completed'];
+  const historical = currentTerm !== null && terms.findIndex((item) => item.id === term) < terms.findIndex((item) => item.id === currentTerm);
+  const statuses: CourseRecordStatus[] = term === currentTerm ? ['enrolled_self_reported', 'planned', 'completed'] : historical ? ['completed', 'planned'] : ['planned', 'completed'];
   const st = statuses.includes(status) ? status : statuses[0];
   const course = hits.find((c) => c.code.toLowerCase() === code.trim().toLowerCase());
   const needsSection = st === 'enrolled_self_reported' && !!course;
@@ -52,7 +53,7 @@ export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
   return (
     <div>
       <form
-        className="space-y-3 rounded-xl border border-neutral-200 p-3"
+        className="surface space-y-4"
         onSubmit={async (e) => {
           e.preventDefault();
           if (busy) return;
@@ -121,6 +122,9 @@ export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
             ))}
           </select>
         </label>
+        {st === 'enrolled_self_reported' && (
+          <p className="text-xs text-neutral-600">Use this for current courses you enter yourself.</p>
+        )}
         {needsSection &&
           (bundles.length > 0 ? (
             <label className="block text-xs text-neutral-600">
@@ -128,7 +132,7 @@ export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
               <select name="section" value={bundleId ?? ''} onChange={(e) => setBundle(e.target.value)} className={field}>
                 {bundles.map((b) => (
                   <option key={b.bundle_id} value={b.bundle_id}>
-                    {b.bundle_id} · {b.summary}
+                    {b.label} · {b.summary}
                   </option>
                 ))}
               </select>
@@ -149,15 +153,15 @@ export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
       {records.length === 0 && <p className="py-8 text-center text-sm text-neutral-600">No courses yet. Add past and current courses above.</p>}
       {[...terms]
         .reverse()
-        .filter((t) => records.some((r) => r.term === t.id))
+        .filter((t) => (!onlyTerm || t.id === term) && records.some((r) => r.term === t.id))
         .map((t) => (
-          <section key={t.id} className="mt-4">
-            <h3 className="text-sm font-semibold">{t.label}</h3>
+          <section key={t.id} className="surface mt-3">
+            <h3 className="section-title">{t.label}</h3>
             <ul>
               {records
                 .filter((r) => r.term === t.id)
                 .map((r) => (
-                  <li key={r.id} className="flex items-center justify-between gap-2 border-b border-neutral-200 py-2.5">
+                  <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 py-2.5 last:border-0 last:pb-0">
                     <div>
                       <p className="text-sm font-semibold">
                         {r.course_code ?? COURSES.find((c) => c.id === r.course_id)?.code ?? r.course_id}
@@ -171,11 +175,46 @@ export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
                     <button type="button" onClick={() => removeCourseRecord(r.id)} className="text-sm text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
                       Remove
                     </button>
+                    {t.id === currentTerm && r.status === 'enrolled_self_reported' && (
+                      <SectionEditor record={r} expanded={initialCourse === r.course_id} />
+                    )}
                   </li>
                 ))}
             </ul>
           </section>
         ))}
+    </div>
+  );
+}
+
+function SectionEditor({record, expanded}: {record: CourseRecord; expanded: boolean}) {
+  const [open, setOpen] = useState(expanded);
+  const [sections, setSections] = useState<Bundle[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    getBundles(record.course_id, record.term).then((bundles) => {
+      if (active) setSections(bundles);
+    }).catch(() => {if (active) setError('Couldn’t load sections.');});
+    return () => {active = false;};
+  }, [open, record.course_id, record.term]);
+  return (
+    <div className="w-full">
+      <button type="button" aria-expanded={open} className="text-sm font-extrabold text-accent" onClick={() => setOpen(!open)}>Change section</button>
+      {open && sections?.length ? (
+        <select aria-label="Change section" className={field} value={record.bundle_id ?? ''} disabled={busy} onChange={async (event) => {
+          setBusy(true);
+          try {setError(await changeCourseSection(record.id, event.target.value));}
+          catch {setError('Couldn’t save the section.');}
+          finally {setBusy(false);}
+        }}>
+          <option value="" disabled>Select a section</option>
+          {sections.map((section) => <option key={section.bundle_id} value={section.bundle_id}>{section.label} · {section.summary}</option>)}
+        </select>
+      ) : open && !error && <p role="status" className="mt-1 text-xs text-neutral-600">{sections ? 'Sections are unavailable for this course.' : 'Loading sections…'}</p>}
+      {open && error && <p role="alert" className="mt-1 text-xs text-accent">{error}</p>}
     </div>
   );
 }

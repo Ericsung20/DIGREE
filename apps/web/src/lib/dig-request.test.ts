@@ -18,6 +18,7 @@ test('parseDigInputs rejects out-of-contract values', () => {
   expect(bad({earliest: 1200, latest: 600})).toBe(true);
   expect(bad({blocked: ['FUNDAY']})).toBe(true);
   expect(bad({required: 'a'})).toBe(true);
+  expect(bad({preference: 'unknown'})).toBe(true);
 });
 
 const inputs: DigInputs = {term: '1274', minCredits: 6, maxCredits: 7, required: ['a'], earliest: 480, latest: 1140, blockedDays: []};
@@ -43,6 +44,8 @@ const rows: CatalogRows = {
 test('toGenerateRequest maps catalog rows to the contract without guessing', () => {
   const req = toGenerateRequest(inputs, rows, 'req-1');
   expect(req.contract_version).toBe('1.0');
+  expect(req.top_k).toBe(5);
+  expect(toGenerateRequest({...inputs, preference: 'walking'}, rows, 'req-2').preferences.weights).toMatchObject({walking: 3, campus_days: 1});
   expect(req.constraints).toMatchObject({min_credits: 6, max_credits: 7, earliest_start_min: 480, latest_end_min: 1140, blocked_days: []});
   const [a, b] = req.courses;
   expect(a).toMatchObject({course_id: 'a', course_code: 'AAA 101', is_required: true, already_completed: false, eligibility_status: 'unknown', requirement_fit: null, grade_stats: {a_ab_rate: 0.61, sample_size: 420}});

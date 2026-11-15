@@ -18,10 +18,10 @@ export type CourseRecord = {
 };
 export type CourseRecordDraft = Omit<CourseRecord, 'id'>;
 
-/** Trust copy. Planned is not a registration; self-reported is never verified. */
+/** Labels shown in Course History. */
 export const STATUS_LABEL: Record<CourseRecordStatus, string> = {
   completed: 'Completed',
-  enrolled_self_reported: 'Self-reported — not verified by UW',
+  enrolled_self_reported: 'Taking now',
   planned: 'Planned — not registered',
   withdrawn: 'Withdrawn',
 };
@@ -48,7 +48,7 @@ export const useCourseRecords: () => CourseRecord[] = IS_MOCK ? () => useStore(K
 /** Returns a user-facing error, or null when the draft can be added. */
 export function validateRecord(existing: CourseRecord[], draft: CourseRecordDraft, currentTerm: string | null): string | null {
   if (existing.some((r) => r.term === draft.term && r.course_id === draft.course_id)) return 'Already added for this term.';
-  if (draft.status === 'enrolled_self_reported' && draft.term !== currentTerm) return 'Self-reported enrollment is for the current term only.';
+  if (draft.status === 'enrolled_self_reported' && draft.term !== currentTerm) return 'Taking now is available for the current term only.';
   return null;
 }
 
@@ -77,6 +77,15 @@ export async function setCountsTowardMajor(id: string, value: boolean): Promise<
     if (error) return console.error('Saving the major flag failed', error);
   }
   put(current().map((r) => (r.id === id ? {...r, counts_toward_major: value} : r)));
+}
+
+export async function changeCourseSection(id: string, bundleId: string): Promise<string | null> {
+  if (!IS_MOCK) {
+    const {error} = await supabase().from('user_course_records').update({bundle_id: bundleId}).eq('id', id).eq('status', 'enrolled_self_reported');
+    if (error) return error.message;
+  }
+  put(current().map((record) => record.id === id ? {...record, bundle_id: bundleId} : record));
+  return null;
 }
 
 // Grades live apart from the records, like grade_entries (keyed by record_id) in the DB handoff.

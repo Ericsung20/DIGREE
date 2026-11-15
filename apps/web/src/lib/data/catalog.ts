@@ -2,6 +2,7 @@ import type {components} from '../contract/types';
 import request from '../../mocks/request.json';
 import {IS_MOCK, supabase} from '../supabase';
 import {byDayThenStart, minToLabel} from '../time';
+import {displayTerm} from '../terms';
 import {useRemote} from './local-store';
 
 // Mock catalog. Row shapes follow supabase/DB_HANDOFF.md (terms, colleges, academic_programs, courses, section_bundles).
@@ -11,7 +12,7 @@ export type Term = {id: string; label: string; is_current: boolean};
 export type College = {id: string; label: string};
 export type Program = {id: string; college_id: string; label: string; catalog_year: number};
 export type Meeting = components['schemas']['Meeting'];
-export type Bundle = {bundle_id: string; summary: string; meetings: Meeting[]; instructor_score: number | null};
+export type Bundle = {bundle_id: string; label: string; summary: string; meetings: Meeting[]; instructor_score: number | null; instructors: string[]};
 export type Course = {id: string; code: string; credit_options: number[]; bundles: Bundle[]};
 
 export const TERMS: Term[] = [
@@ -39,7 +40,7 @@ const NO_TERMS: Term[] = [];
 async function fetchTerms(): Promise<Term[]> {
   const {data, error} = await supabase().from('terms').select('id, label, is_current').order('id');
   if (error) throw error;
-  return data as Term[];
+  return (data as Term[]).map((term) => ({...term, label: displayTerm(term.label)}));
 }
 /** Terms from the active data source. */
 export const useTerms: () => Term[] = IS_MOCK ? () => TERMS : () => useRemote('terms', NO_TERMS, fetchTerms);
@@ -47,6 +48,30 @@ export const useTerms: () => Term[] = IS_MOCK ? () => TERMS : () => useRemote('t
 export const currentTermOf = (terms: Term[]) => terms.find((t) => t.is_current)?.id ?? null;
 
 export type CourseHit = {id: string; code: string; title: string | null; credit_options: number[]};
+
+export function useCourseInfo(id: string | null) {
+  return useRemote<CourseHit | null>(`course:${id}`, null, async () => {
+    if (!id) return null;
+    if (IS_MOCK) {
+      const course = COURSES.find((item) => item.id === id);
+      return course ? {...course, title: null} : null;
+    }
+    const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').eq('id', id).maybeSingle();
+    if (error) throw error;
+    return data;
+  });
+}
+
+const NO_NAMES: Record<string, string> = {};
+export function useBuildingNames(ids: string[]) {
+  const buildings = [...new Set(ids)].sort();
+  return useRemote(`building-names:${JSON.stringify(buildings)}`, NO_NAMES, async () => {
+    if (IS_MOCK || !buildings.length) return NO_NAMES;
+    const {data, error} = await supabase().from('buildings').select('id, name').in('id', buildings);
+    if (error) throw error;
+    return Object.fromEntries(data.map(({id, name}) => [id, name ?? id]));
+  });
+}
 
 /** Course search by code. Real mode needs 2+ characters and returns at most 20 rows. */
 export async function searchCourses(q: string): Promise<CourseHit[]> {
@@ -63,7 +88,7 @@ export async function getBundles(courseId: string, term: string): Promise<Bundle
   if (IS_MOCK) return term === CURRENT_TERM ? (COURSES.find((c) => c.id === courseId)?.bundles ?? []) : [];
   const db = supabase();
   const [bundles, meetings] = await Promise.all([
-    db.from('section_bundles').select('bundle_id, instructor_score').eq('term', term).eq('course_id', courseId).order('bundle_id'),
+    db.from('section_bundles').select('bundle_id, section_label, instructors, instructor_score').eq('term', term).eq('course_id', courseId).order('bundle_id'),
     db.from('meetings').select('bundle_id, day, start_min, end_min, mode, building_id').eq('term', term).eq('course_id', courseId),
   ]);
   if (bundles.error) throw bundles.error;
@@ -72,6 +97,8 @@ export async function getBundles(courseId: string, term: string): Promise<Bundle
     const ms = (meetings.data as (Meeting & {bundle_id: string})[]).filter((m) => m.bundle_id === b.bundle_id).sort(byDayThenStart);
     return {
       bundle_id: b.bundle_id as string,
+      label: b.section_label ?? b.bundle_id,
+      instructors: b.instructors as string[],
       instructor_score: b.instructor_score as number | null,
       meetings: ms.map((m) => ({day: m.day, start_min: m.start_min, end_min: m.end_min, mode: m.mode, building_id: m.building_id})),
       summary: ms.length ? `${[...new Set(ms.map((m) => dayShort(m.day)))].join('/')} ${minToLabel(ms[0].start_min)}` : 'No meeting times',
@@ -126,6 +153,8 @@ export const COURSES: Course[] = [
     credit_options: c.credit_options,
     bundles: c.section_bundles.map((b) => ({
       bundle_id: b.bundle_id,
+      label: b.bundle_id,
+      instructors: [],
       meetings: b.meetings as Meeting[], // JSON import widens the enums
       instructor_score: b.instructor_score as number | null,
       summary: b.meetings.length ? `${b.meetings.map((m) => dayShort(m.day)).join('/')} ${minToLabel(b.meetings[0].start_min)}` : 'No meeting times',

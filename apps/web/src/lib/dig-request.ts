@@ -18,9 +18,11 @@ export type DigDefaults = {
   latest: number;
   courses: {id: string; code: string; credits: string; required: boolean}[];
   sample: boolean;
+  hasSections?: boolean;
 };
 
-export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]};
+export type DigPreference = 'balanced' | 'walking' | 'days';
+export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]; preference?: DigPreference; related?: boolean};
 
 const int = (v: unknown, min: number, max: number): number | null => {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
@@ -43,7 +45,10 @@ export function parseDigInputs(raw: unknown): DigInputs | {error: string} {
   if (minCredits > maxCredits) return {error: "Minimum credits can't exceed maximum."};
   if (earliest === null || latest === null || earliest >= latest) return {error: 'Earliest start must be before latest end.'};
   if (!required || !blocked || !blocked.every((d) => (DAYS as string[]).includes(d))) return {error: 'Invalid course or day selection.'};
-  return {term: r.term, minCredits, maxCredits, required, earliest, latest, blockedDays: blocked as Day[]};
+  const preference = r.preference;
+  if (preference !== undefined && preference !== 'balanced' && preference !== 'walking' && preference !== 'days') return {error: 'Choose a valid scheduling preference.'};
+  return {term: r.term, minCredits, maxCredits, required, earliest, latest, blockedDays: blocked as Day[],
+    ...(preference !== undefined ? {preference} : {}), ...(r.related === true ? {related: true} : {})};
 }
 
 /** Catalog rows for the candidate courses, as read from the database. */
@@ -67,7 +72,7 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
     contract_version: '1.0',
     request_id: requestId,
     term: inputs.term,
-    top_k: 3,
+    top_k: 5,
     constraints: {
       min_credits: inputs.minCredits,
       max_credits: inputs.maxCredits,
@@ -78,8 +83,7 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
       max_walk_per_transition_min: null,
       exclude_full_sections: false,
     },
-    // Fixed weights: the three schedule-shape factors the optimizer's MVP scores. Not a user input.
-    preferences: {weights: {walking: 1, idle_gap: 1, campus_days: 1, grade_outcomes: 0, degree_fit: 0, instructor: 0}},
+    preferences: {weights: {walking: inputs.preference === 'walking' ? 3 : 1, idle_gap: 1, campus_days: inputs.preference === 'days' ? 3 : 1, grade_outcomes: 0, degree_fit: 0, instructor: 0}},
     courses: rows.courses.map((c) => {
       const stat = rows.stats.find((s) => s.course_id === c.id);
       return {
