@@ -15,10 +15,14 @@ export function digTerm(terms: Term[], requested: string | null): string {
 }
 
 export function useDigConditions(): DigConditions {
-  const stored = useStore<DigConditions>(CONDITIONS, DEFAULT_CONDITIONS);
+  const stored = useStore<DigConditions & {maxMajorCourses?: number | null}>(CONDITIONS, DEFAULT_CONDITIONS);
   // A value saved by an older build may be missing fields; start over rather than crash.
-  return Array.isArray(stored?.days) && stored.days.length === 5 && stored.prefer && Number.isInteger(stored.credits)
-    ? {...stored, breadths: Array.isArray(stored.breadths) ? stored.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code)) : []}
+  return Array.isArray(stored?.days) && stored.days.length === 5 && Number.isInteger(stored.credits)
+    ? {credits: Math.min(18, Math.max(1, stored.credits)), days: stored.days, earliest: stored.earliest, latest: stored.latest,
+      majorPreference: stored.majorPreference === 'none' || stored.majorPreference === 'balanced' ? stored.majorPreference
+        : typeof stored.majorPreference === 'number' && Number.isInteger(stored.majorPreference) && stored.majorPreference >= 0 && stored.majorPreference <= 6 ? stored.majorPreference
+        : typeof stored.maxMajorCourses === 'number' && Number.isInteger(stored.maxMajorCourses) && stored.maxMajorCourses >= 0 && stored.maxMajorCourses <= 6 ? stored.maxMajorCourses : 'balanced',
+      breadths: Array.isArray(stored.breadths) ? stored.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code)) : []}
     : DEFAULT_CONDITIONS;
 }
 export const saveDigConditions = (conditions: DigConditions) => writeStore(CONDITIONS, conditions);

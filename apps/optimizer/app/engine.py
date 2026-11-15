@@ -39,6 +39,7 @@ from app.scoring import (
     ranking_key,
     schedule_score,
     smoothed_grade_rate,
+    major_balance_component,
 )
 
 DAY_ORDER = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
@@ -96,6 +97,7 @@ class _ScoringPlan:
     degree_fit: DataFactor | None
     instructor: DataFactor | None
     breadth: DataFactor | None
+    major_balance: bool
     preferred_breadths: frozenset[str]
     notices: dict[str, str]  # advisory warnings every result carries, by code
 
@@ -291,10 +293,11 @@ def _scoring_plan(
             instructor = factor
 
     compared = [name for name in SHAPE_FACTORS if getattr(weights, name) > 0]
-    if not compared and grade is None and degree_fit is None and instructor is None and breadth is None:
+    major_balance = weights.major_balance > 0 and any(course.is_major_course for course in optional)
+    if not compared and grade is None and degree_fit is None and instructor is None and breadth is None and not major_balance:
         notices["score_not_comparable"] = messages.score_not_comparable()
 
-    return _ScoringPlan(weights, grade, degree_fit, instructor, breadth, preferred, notices)
+    return _ScoringPlan(weights, grade, degree_fit, instructor, breadth, major_balance, preferred, notices)
 
 
 class _Search:
@@ -376,6 +379,14 @@ class _Search:
 
         for credits in slot.credit_options:
             total = credits_so_far + credits
+            if (
+                constraints.max_major_courses is not None
+                and slot.course.is_major_course
+                and sum(choice.course.is_major_course for choice in chosen) >= constraints.max_major_courses
+            ):
+                self._step()
+                self._reject("max_major_courses_exceeded", len(bundles) * completions_below)
+                continue
             if (
                 total + self._min_credits_from[depth + 1] > constraints.max_credits
                 or total + self._max_credits_from[depth + 1] < constraints.min_credits
@@ -552,6 +563,9 @@ class _Search:
             missing = [c.course.course_code for c, match in zip(optional, matches) if match is None]
             if missing:
                 advisories["breadth_data_missing"] = messages.breadth_data_missing(missing)
+
+        if plan.major_balance:
+            values["major_balance"] = major_balance_component(sum(choice.course.is_major_course for choice in choices))
 
         if plan.instructor is not None:
             ratings = [c.bundle.instructor_score for c in choices]

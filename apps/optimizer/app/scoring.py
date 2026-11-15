@@ -1,9 +1,9 @@
 """Soft scoring and ranking (pure functions, no I/O).
 
-Seven weighted factors, each a value between 0 and 1:
+Eight weighted factors, each a value between 0 and 1:
 
 - walking, idle_gap, campus_days describe the shape of the week;
-- grade_outcomes, degree_fit, instructor, breadth come from data the caller supplies.
+- grade_outcomes, degree_fit, instructor, breadth, major_balance come from data the caller supplies.
 
 Nothing here depends on which schedules a search happened to find. Neutral
 values and the decision to compare a factor at all come from the request, so
@@ -34,7 +34,13 @@ GRADE_PRIOR_RATE = 0.5
 GRADE_PRIOR_STRENGTH = 50
 
 SHAPE_FACTORS = ("walking", "idle_gap", "campus_days")
-DATA_FACTORS = ("grade_outcomes", "degree_fit", "instructor", "breadth")
+DATA_FACTORS = ("grade_outcomes", "degree_fit", "instructor", "breadth", "major_balance")
+
+
+def major_balance_component(count: int) -> float:
+    """A soft plateau at 2–4 major courses, with no hard minimum."""
+    distance = max(2 - count, count - 4, 0)
+    return max(0.0, 1.0 - 0.35 * distance)
 
 
 def walking_component(walking_minutes_weekly: float) -> float:

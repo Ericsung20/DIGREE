@@ -18,10 +18,18 @@ button{font:inherit}
 a{color:#8C1D2B}a:hover{color:#6F1622}
 @keyframes pop{0%{opacity:0;transform:translateY(14px) scale(.92)}100%{opacity:1;transform:none}}
 @keyframes fadeUp{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
+@keyframes logoDig{0%,76%,100%{transform:translateY(0)}79%{transform:translateY(-2px)}82%{transform:translateY(2px)}86%{transform:translateY(-.7px)}90%{transform:translateY(0)}}
+@keyframes grainLeft{0%,81%,100%{opacity:0;transform:translate(0,0) scale(.6)}84%{opacity:.7;transform:translate(-4px,-3px) scale(1)}91%{opacity:0;transform:translate(-7px,-5px) scale(.7)}}
+@keyframes grainRight{0%,81%,100%{opacity:0;transform:translate(0,0) scale(.6)}84%{opacity:.55;transform:translate(4px,-2px) scale(1)}91%{opacity:0;transform:translate(6px,-4px) scale(.7)}}
+.home-wordmark{display:inline-block}
+.home-wordmark .wordmark-spade{display:inline-block;position:relative;width:.404em;height:1.05em;vertical-align:-.28em;margin:0 .03em}
+.home-wordmark .wordmark-spade svg{animation:logoDig 5.2s ease-in-out infinite}
+.home-wordmark .wordmark-grain{position:absolute;bottom:0;width:2px;height:2px;border-radius:50%;background:#A97660;pointer-events:none;opacity:0}
+.home-wordmark .wordmark-grain-left{left:0;animation:grainLeft 5.2s ease-out infinite}
+.home-wordmark .wordmark-grain-right{right:0;animation:grainRight 5.2s ease-out infinite}
+@media(prefers-reduced-motion:reduce){.home-wordmark .wordmark-spade svg,.home-wordmark .wordmark-grain{animation:none}}
 .press{transition:transform 160ms ease}
 .press:active{transform:scale(.94)}
-.dig:hover svg{animation:dig 600ms ease-in-out}
-@keyframes dig{0%,100%{transform:rotate(0)}30%{transform:rotate(-18deg) translateY(2px)}60%{transform:rotate(10deg) translateY(-1px)}}
 `;
 
 const H = 52;
@@ -111,7 +119,7 @@ function Schedule() {
     <Frame css={CSS} numeric>
       <header style={s('flex-shrink: 0; padding: 12px 20px 0; display: flex; flex-direction: column; gap: 14px; animation: fadeUp 420ms ease both')}>
         <div style={s('display: flex; align-items: center; justify-content: space-between; height: 44px')}>
-          <Wordmark style="font-size: 26px; font-weight: 900; letter-spacing: -0.02em; line-height: 1" />
+          <Wordmark className="home-wordmark" animatedMark style="font-size: 28px; font-weight: 900; letter-spacing: -0.035em; line-height: 1; color: #1D1B1A" />
           <div style={s('display: flex; align-items: center; gap: 2px')}>
             <Link href="/friends" className="press" aria-label="Friends" style={s('width: 44px; height: 44px; color: #1D1B1A; display: flex; align-items: center; justify-content: center; border-radius: 22px; text-decoration: none')}>
               <Svg size={22} sw={2.2}>{ICON.friends}</Svg>
@@ -194,7 +202,7 @@ function Schedule() {
         )}
       </main>
 
-      <TabBar active="schedule" digHover />
+      <TabBar active="schedule" />
 
       <div aria-hidden="true" onClick={() => setOpen(false)} style={s(`position: absolute; inset: 0; z-index: 20; background: rgba(29,27,26,0.32); transition: opacity 300ms ease; ${open ? 'opacity: 1; pointer-events: auto' : 'opacity: 0; pointer-events: none'}`)} />
       {c && (

@@ -1,6 +1,6 @@
 import type {components} from '../contract/types';
 import fixture from '../../mocks/request.json';
-import {BREADTH_OPTIONS} from '../breadth';
+import {BREADTH_OPTIONS, expandBreadthCodes} from '../breadth';
 import {parseDigInputs, weightsFor} from '../dig-request';
 
 export type GenerateRequest = components['schemas']['GenerateRequest'];
@@ -29,16 +29,23 @@ export function buildSampleGenerateRequest(raw: unknown): GenerateRequest | {err
   const optional: Candidate[] = BREADTH_OPTIONS.map(({code}) => ({
     course_id: `demo-breadth-${code.toLowerCase()}`,
     course_code: `DEMO ${code} 101`,
-    credit_options: [4],
+    credit_options: [4, 6],
     is_required: false,
+    is_major_course: false,
     eligibility_status: 'eligible',
     already_completed: false,
     repeatable: false,
     requirement_fit: null,
-    breadth: [code],
+    breadth: expandBreadthCodes([code]),
     grade_stats: null,
     section_bundles: [{bundle_id: `demo-${code.toLowerCase()}-A`, meetings, seat_status: 'open', instructor_score: null}],
   }));
+  optional.unshift({
+    course_id: 'demo-a-major', course_code: 'DEMO CS 301', credit_options: [4, 6],
+    is_required: false, is_major_course: true, eligibility_status: 'eligible', already_completed: false, repeatable: false,
+    requirement_fit: null, breadth: null, grade_stats: null,
+    section_bundles: [{bundle_id: 'demo-major-A', meetings, seat_status: 'open', instructor_score: null}],
+  });
   body.request_id = 'sample-dig';
   body.term = inputs.term;
   body.top_k = 5;
@@ -49,8 +56,9 @@ export function buildSampleGenerateRequest(raw: unknown): GenerateRequest | {err
     earliest_start_min: inputs.earliest,
     latest_end_min: inputs.latest,
     blocked_days: inputs.blockedDays,
+    max_major_courses: inputs.maxMajorCourses ?? null,
   };
-  body.preferences = {weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths), preferred_breadths: inputs.preferredBreadths ?? []};
-  body.courses = [...body.courses.map((course) => ({...course, is_required: inputs.required.includes(course.course_id), breadth: null})), ...optional];
+  body.preferences = {weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths, inputs.balanceMajorCourses), preferred_breadths: inputs.preferredBreadths ?? []};
+  body.courses = [...body.courses.map((course) => ({...course, is_required: inputs.required.includes(course.course_id), is_major_course: course.course_id === 'cs400', breadth: null})), ...optional];
   return body;
 }

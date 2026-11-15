@@ -2,7 +2,7 @@ import {expect, test, vi} from 'vitest';
 import {isRoomMember, myChatRooms} from './chat';
 import {filterPosts, makeAlias, setVote, type Post} from './community';
 import type {CourseRecord} from './course-records';
-import {acceptFriend, sendFriendRequest, viewFriendSchedule, type Friend} from './friends';
+import {acceptFriend, findFriendByNetId, sendFriendRequest, viewFriendSchedule, type Friend} from './friends';
 
 const friend = (over: Partial<Friend>): Friend => ({id: 'x', name: 'X', status: 'accepted', schedule: 1, ...over});
 const record = (course_id: string, over: Partial<CourseRecord> = {}): CourseRecord => ({id: course_id, term: '2027SP', course_id, credits: 3, status: 'enrolled_self_reported', bundle_id: null, counts_toward_major: false, source: 'manual', ...over});
@@ -24,8 +24,12 @@ test('NetID request stays pending until the recipient accepts', async () => {
   const values = new Map<string, string>();
   vi.stubGlobal('localStorage', {getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value)});
   try {
-    expect(await sendFriendRequest('newstudent')).toBeNull();
-    const pending = (JSON.parse(values.get('digree.friends')!) as Friend[]).find((item) => item.name === 'newstudent');
+    expect(await findFriendByNetId('casey')).toEqual({match: {id: 'netid:casey', netid: 'casey'}, error: null});
+    expect(values.has('digree.friends')).toBe(false); // Enter/search cannot send a request
+    expect(await findFriendByNetId('nobody')).toEqual({match: null, error: null});
+    expect(await sendFriendRequest('nobody')).toBe('No account has that NetID.');
+    expect(await sendFriendRequest('casey')).toBeNull();
+    const pending = (JSON.parse(values.get('digree.friends')!) as Friend[]).find((item) => item.name === 'casey');
     expect(pending?.status).toBe('outgoing');
     expect(viewFriendSchedule(pending)).toEqual({access: 'none'});
     expect(await acceptFriend('f4')).toBeNull();

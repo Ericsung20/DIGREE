@@ -28,6 +28,22 @@ const SEED: Friend[] = [
 const NONE: Friend[] = [];
 const KEY = 'digree.friends';
 const NETID = /^[a-z][a-z0-9._-]{1,31}$/;
+export type FriendSearchResult = {id: string; netid: string};
+const MOCK_ACCOUNTS: FriendSearchResult[] = [
+  ...SEED.map(({id, name}) => ({id, netid: name.toLowerCase()})),
+  {id: 'netid:casey', netid: 'casey'},
+];
+
+/** Exact NetID lookup. Searching never creates a request. */
+export async function findFriendByNetId(input: string): Promise<{match: FriendSearchResult | null; error: string | null}> {
+  const netid = input.trim().toLowerCase();
+  if (!NETID.test(netid)) return {match: null, error: 'Enter a valid UW NetID.'};
+  if (IS_MOCK) return {match: MOCK_ACCOUNTS.find((account) => account.netid === netid) ?? null, error: null};
+  const {data, error} = await supabase().rpc('find_friend_by_netid', {p_netid: netid});
+  if (error) return {match: null, error: error.message};
+  const row = (data as FriendSearchResult[] | null)?.[0];
+  return {match: row ?? null, error: null};
+}
 
 async function myId(): Promise<string | null> {
   return (await supabase().auth.getUser()).data.user?.id ?? null;
@@ -97,6 +113,7 @@ export async function sendFriendRequest(input: string): Promise<string | null> {
   const clean = input.trim().toLowerCase();
   if (!NETID.test(clean)) return 'Enter a valid UW NetID.';
   if (IS_MOCK) {
+    if (!MOCK_ACCOUNTS.some((account) => account.netid === clean)) return 'No account has that NetID.';
     if (all().some((f) => f.name.toLowerCase() === clean)) return 'Already in your list.';
     put([...all(), {id: `netid:${clean}`, name: clean, status: 'outgoing', schedule: null}]);
     return null;

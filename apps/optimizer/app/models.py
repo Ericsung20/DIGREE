@@ -62,6 +62,7 @@ class CandidateCourse(ContractModel):
     course_code: str
     credit_options: list[Annotated[int, Field(ge=1, le=30)]] = Field(min_length=1)
     is_required: bool
+    is_major_course: bool = False
     eligibility_status: EligibilityStatus
     already_completed: bool
     repeatable: bool
@@ -86,6 +87,7 @@ class Constraints(ContractModel):
     blocked_days: list[Day]
     walking_buffer_min: int = Field(ge=0, le=60)
     max_walk_per_transition_min: int | None = Field(default=None, ge=0, le=120)
+    max_major_courses: int | None = Field(default=None, ge=0, le=6)
     exclude_full_sections: bool = False
 
     @model_validator(mode="after")
@@ -106,6 +108,7 @@ class Weights(ContractModel):
     degree_fit: Weight
     instructor: Weight
     breadth: Weight = 0
+    major_balance: Weight = 0
 
     @model_validator(mode="after")
     def _not_all_zero(self) -> "Weights":

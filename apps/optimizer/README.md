@@ -160,7 +160,7 @@ Every schedule holds **all required courses**, each with one section bundle and 
 
 **Optional courses** (`is_required: false`) are added only when the required courses cannot reach the credit range on their own, that is, when no combination of their credit options lands inside `min_credits..max_credits`. Then every set of usable optional courses whose total lands inside the range is a candidate: with 9 required credits and a 12-18 range, schedules of 12, 15 and 18 credits are all eligible. When the required courses already fit the range, optional courses are not considered at all.
 
-When `preferred_breadths` and a positive `weights.breadth` are supplied, matching optional courses get priority in the bounded candidate pool and a higher score. Other breadths remain eligible. The caller sends the catalog's `breadth` codes on each candidate course; null means the codes are unknown.
+When `preferred_breadths` and a positive `weights.breadth` are supplied, optional courses matching **any** selected tag get priority in the bounded candidate pool and a higher score. The tags include breadth and Gen Ed designations; courses matching none remain eligible. The caller sends designation tags in each candidate course's `breadth` field; null means the tags are unknown. `constraints.max_major_courses`, when set from 0 to 6, is a hard cap on all selected courses with `is_major_course=true`, including must-takes. A positive `weights.major_balance` gently favors schedules with 2–4 major courses where possible; zero is neutral.
 
 An optional course is usable unless it is `ineligible`, `already_completed` and not `repeatable`, or has no section bundles. One with `eligibility_status: unknown` is usable, and a schedule containing it is `needs_review`.
 
