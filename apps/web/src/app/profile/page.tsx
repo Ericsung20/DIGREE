@@ -60,7 +60,6 @@ export default function ProfilePage() {
 
   const edit = '/onboarding?from=profile';
   const history = '/onboarding/courses?from=profile';
-  const year = program ? `${program.catalog_year}–${String(program.catalog_year + 1).slice(-2)}` : '—';
 
   return (
     <Frame css={CSS} numeric>
@@ -87,9 +86,7 @@ export default function ProfilePage() {
         <section className="rise" style={s('flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; animation-delay: 120ms')}>
           <h2 style={s(GROUP)}>Academic profile</h2>
           <Link href={edit} className="row" style={s(ROW + DIVIDER)}><span style={s(KEY)}>College</span><span style={s(VALUE)}>{colleges.find((college) => college.id === program?.college_id)?.label ?? '—'}</span></Link>
-          <Link href={edit} className="row" style={s(ROW + DIVIDER)}><span style={s(KEY)}>Primary major</span><span style={s(VALUE)}>{program?.label ?? '—'}</span></Link>
-          <Link href={edit} className="row" style={s(ROW)}><span style={s(KEY)}>Catalog year</span><span style={s(VALUE)}>{year}</span></Link>
-          <p style={s('margin: -4px 16px 12px; font-size: 13px; color: #5F5A55')}>The UW Guide edition that applies to your primary major. Check your DARS for the year.</p>
+          <Link href={edit} className="row" style={s(ROW)}><span style={s(KEY)}>Primary major</span><span style={s(VALUE)}>{program?.label ?? '—'}</span></Link>
           {profile && <ProfilePrograms primaryId={profile.program_id} />}
         </section>
 

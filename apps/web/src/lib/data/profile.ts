@@ -5,6 +5,11 @@ import {getRemote, readStore, setRemote, useRemote, useStore, writeStore} from '
 // Same columns as academic_profiles in the DB handoff (user_id is implied by the session there).
 export type AcademicProfile = {college_id: string; program_id: string; catalog_year: number};
 
+export function latestCatalogEdition<T extends {catalog_year: number}>(editions: T[]): T | undefined {
+  return editions.reduce<T | undefined>((latest, edition) =>
+    !latest || edition.catalog_year > latest.catalog_year ? edition : latest, undefined);
+}
+
 const KEY = 'digree.profile';
 const COLUMNS = 'college_id, program_id, catalog_year';
 const EMPTY_OPTIONS = {colleges: [] as College[], programs: [] as Program[], ready: false};

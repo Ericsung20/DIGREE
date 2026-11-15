@@ -4,7 +4,7 @@ import {useRouter, useSearchParams} from 'next/navigation';
 import {Suspense, useState} from 'react';
 import {EmptyNote, Frame, Svg} from '@/components/dg';
 import {signOut} from '@/components/session-gate';
-import {saveProfile, useAcademicOptions, useProfile} from '@/lib/data/profile';
+import {latestCatalogEdition, saveProfile, useAcademicOptions, useProfile} from '@/lib/data/profile';
 import {s} from '@/lib/ui/css';
 
 const CSS = `
@@ -16,9 +16,8 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 .press:active{transform:scale(.97)}
 `;
 
-type Draft = {college: string | null; major: string | null; program: string | null; step: number};
-const EMPTY: Draft = {college: null, major: null, program: null, step: 0};
-const catalogYear = (year: number) => `${year}–${String(year + 1).slice(-2)}`;
+type Draft = {college: string | null; major: string | null; step: number};
+const EMPTY: Draft = {college: null, major: null, step: 0};
 
 // Step 1 of 2 for a new account, and the editor behind the Academic profile rows on Profile.
 function AcademicProfile() {
@@ -31,32 +30,33 @@ function AcademicProfile() {
   const [error, setError] = useState(false);
 
   const savedProgram = all.find((program) => program.id === saved?.program_id);
-  const v = draft ?? (savedProgram ? {college: savedProgram.college_id, major: savedProgram.label, program: savedProgram.id, step: 3} : EMPTY);
+  const v = draft ?? (savedProgram ? {college: savedProgram.college_id, major: savedProgram.label, step: 2} : EMPTY);
   const inCollege = all.filter((program) => program.college_id === v.college);
-  const years = inCollege.filter((program) => program.label === v.major).sort((a, b) => b.catalog_year - a.catalog_year);
-  const chosen = years.find((program) => program.id === v.program);
+  const editions = inCollege.filter((program) => program.label === v.major);
+  const chosen = editions.find((program) => program.id === saved?.program_id) ?? latestCatalogEdition(editions);
   const lists = [
     colleges.filter((college) => all.some((program) => program.college_id === college.id)).map((college) => ({id: college.id, label: college.label})),
     [...new Set(inCollege.map((program) => program.label))].map((label) => ({id: label, label})),
-    years.map((program) => ({id: program.id, label: catalogYear(program.catalog_year)})),
   ];
-  const picks = [v.college, v.major, v.program];
-  const labels = ['College', 'Major', 'Catalog year'];
-  const placeholders = ['Choose your college', v.college === null ? 'Pick a college first' : 'Choose your major', 'Choose your major’s Guide year'];
+  const picks = [v.college, v.major];
+  const labels = ['College', 'Major'];
+  const placeholders = ['Choose your college', v.college === null ? 'Pick a college first' : 'Choose your major'];
   const unavailable = ready && all.length === 0;
   const done = !!chosen || unavailable;
 
   function pick(i: number, id: string) {
     setError(false);
-    if (i === 0) setDraft({college: id, major: null, program: null, step: 1});
-    else if (i === 1) setDraft({...v, major: id, program: null, step: 2});
-    else setDraft({...v, program: id, step: 3});
+    if (i === 0) {
+      setDraft({college: id, major: id === v.college ? v.major : null, step: 1});
+    } else {
+      setDraft({...v, major: id, step: 2});
+    }
   }
 
   async function next() {
     if (busy) return;
     const onward = fromProfile ? '/profile' : '/onboarding/courses';
-    if (!chosen) return router.push(onward);
+    if (!chosen || chosen.id === saved?.program_id) return router.push(onward);
     setBusy(true);
     setError(false);
     try {
@@ -93,7 +93,6 @@ function AcademicProfile() {
         {!unavailable && labels.map((label, i) => {
           const open = v.step === i;
           const picked = picks[i] !== null && lists[i].some((option) => option.id === picks[i]);
-          const isYear = i === 2;
           return (
             <section key={label} style={s(`flex-shrink: 0; border-radius: 22px; overflow: hidden; transition: background 260ms ease, box-shadow 260ms ease; ${open ? 'background: #FFFFFF; box-shadow: 0 10px 28px rgba(40,20,20,0.08)' : 'background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06)'}`)}>
               <button type="button" onClick={() => {
@@ -103,14 +102,11 @@ function AcademicProfile() {
                 <span style={s('flex: 1; display: flex; flex-direction: column')}><span style={s('font-size: 13px; font-weight: 800; color: #5F5A55')}>{label}</span><span style={s('font-size: 16px; font-weight: 900')}>{picked ? lists[i].find((option) => option.id === picks[i])!.label : ready ? placeholders[i] : 'Loading…'}</span></span>
               </button>
               {open && (
-                <div className="rise" style={s(isYear ? 'padding: 0 16px 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px' : 'padding: 0 10px 12px; display: flex; flex-direction: column; gap: 4px')}>
-                  {isYear && <p style={s('grid-column: 1 / -1; margin: 0; color: #5F5A55; font-size: 13px')}>Choose the UW Guide edition listed for your major in DARS.</p>}
+                <div className="rise" style={s('padding: 0 10px 12px; display: flex; flex-direction: column; gap: 4px')}>
                   {lists[i].map((option) => {
                     const on = picks[i] === option.id;
                     return (
-                      <button key={option.id} type="button" className="press" aria-pressed={on} onClick={() => pick(i, option.id)} style={s(isYear
-                        ? `height: 48px; border: none; border-radius: 16px; font-size: 15px; font-weight: 900; cursor: pointer; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: #F4F1ED; color: #1D1B1A'}`
-                        : `min-height: 48px; padding: 0 14px; border: none; border-radius: 14px; text-align: left; font-size: 15px; font-weight: 800; cursor: pointer; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: transparent; color: #1D1B1A'}`)}>{option.label}</button>
+                      <button key={option.id} type="button" className="press" aria-pressed={on} onClick={() => pick(i, option.id)} style={s(`min-height: 48px; padding: 0 14px; border: none; border-radius: 14px; text-align: left; font-size: 15px; font-weight: 800; cursor: pointer; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: transparent; color: #1D1B1A'}`)}>{option.label}</button>
                     );
                   })}
                 </div>

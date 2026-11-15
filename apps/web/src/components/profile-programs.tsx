@@ -4,12 +4,11 @@ import {useState, type FormEvent} from 'react';
 import {
   addProfileProgram, removeProfileProgram, useProfilePrograms, useSupplementalCatalog, type ProfileProgramDraft,
 } from '@/lib/data/profile-programs';
-import {useAcademicOptions} from '@/lib/data/profile';
+import {latestCatalogEdition, useAcademicOptions} from '@/lib/data/profile';
 import styles from './profile-programs.module.css';
 
 const KINDS = {major: 'Major', certificate: 'Certificate', minor: 'Minor'} as const;
 type Kind = keyof typeof KINDS;
-const yearLabel = (year: number) => `${year}–${String(year + 1).slice(-2)}`;
 
 export function ProfilePrograms({primaryId}: {primaryId: string}) {
   const {colleges, programs} = useAcademicOptions();
@@ -19,28 +18,24 @@ export function ProfilePrograms({primaryId}: {primaryId: string}) {
   const [college, setCollege] = useState('');
   const [major, setMajor] = useState('');
   const [supplementalName, setSupplementalName] = useState('');
-  const [supplementalYear, setSupplementalYear] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const saved = programs.filter((program) => program.id === primaryId || entries.some((entry) => entry.program_id === program.id));
   const available = programs.filter((program) => !saved.some((item) => item.college_id === program.college_id && item.label === program.label));
   const majors = [...new Set(available.filter((program) => program.college_id === college).map((program) => program.label))];
-  const years = available.filter((program) => program.college_id === college && program.label === major)
-    .sort((a, b) => b.catalog_year - a.catalog_year);
+  const chosenMajor = latestCatalogEdition(available.filter((program) => program.college_id === college && program.label === major));
   const byKind = catalog.programs.filter((program) => program.kind === kind);
-  // A Guide path may change when a program moves departments. Select by title, then save the chosen edition's key.
+  // A Guide path may change when a program moves departments. Group by title and save the matching edition's key.
   const offered = byKind.filter((program) => !entries.some((entry) => entry.kind === kind
     && (entry.supplemental_program_key === program.program_key || entry.name?.toLowerCase() === program.name.toLowerCase())));
   const supplementalOptions = [...new Set(offered.map((program) => program.name))].sort((a, b) => a.localeCompare(b));
-  const supplementalYears = offered.filter((program) => program.name === supplementalName);
-  const chosenSupplemental = supplementalYears.find((program) => String(program.catalog_year) === supplementalYear);
+  const chosenSupplemental = latestCatalogEdition(offered.filter((program) => program.name === supplementalName));
 
   function open(next: Kind) {
     setCollege('');
     setMajor('');
     setSupplementalName('');
-    setSupplementalYear('');
     setError('');
     setKind(next);
   }
@@ -48,19 +43,16 @@ export function ProfilePrograms({primaryId}: {primaryId: string}) {
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!kind || busy) return;
-    const fields = new FormData(event.currentTarget);
-    const year = String(fields.get('year') ?? '');
-    const supplemental = supplementalYears.find((program) => program.catalog_year === Number(year));
     let draft: ProfileProgramDraft;
-    if (kind === 'major' && years.some((program) => program.id === year)) {
-      draft = {kind, program_id: year, name: null, catalog_year: null};
-    } else if (kind !== 'major' && supplemental) {
+    if (kind === 'major' && chosenMajor) {
+      draft = {kind, program_id: chosenMajor.id, name: null, catalog_year: null};
+    } else if (kind !== 'major' && chosenSupplemental) {
       draft = {
-        kind, program_id: null, name: supplemental.name, catalog_year: supplemental.catalog_year,
-        supplemental_program_key: supplemental.program_key,
+        kind, program_id: null, name: chosenSupplemental.name, catalog_year: chosenSupplemental.catalog_year,
+        supplemental_program_key: chosenSupplemental.program_key,
       };
     } else {
-      setError(`Choose the ${kind} and its catalog year.`);
+      setError(`Choose a ${kind}.`);
       return;
     }
 
@@ -96,10 +88,9 @@ export function ProfilePrograms({primaryId}: {primaryId: string}) {
           const official = catalog.programs.find((item) => item.program_key === entry.supplemental_program_key
             && item.catalog_year === entry.catalog_year && item.kind === entry.kind);
           const name = official?.name ?? entry.name ?? program?.label ?? 'Catalog major';
-          const year = program?.catalog_year ?? entry.catalog_year;
           return <li key={entry.id} className={styles.entry}>
             <div>
-              <span className={styles.meta}>{KINDS[entry.kind]}{year && ` · ${yearLabel(year)} Guide`}</span>
+              <span className={styles.meta}>{KINDS[entry.kind]}</span>
               <strong>{official?.source_url?.startsWith('https://guide.wisc.edu/')
                 ? <a href={official.source_url} target="_blank" rel="noreferrer">{name}</a>
                 : name}</strong>
@@ -131,33 +122,13 @@ export function ProfilePrograms({primaryId}: {primaryId: string}) {
                   {majors.map((item) => <option key={item}>{item}</option>)}
                 </select>
               </label>
-              <label>Catalog year
-                <select key={major} name="year" required disabled={!major} defaultValue="">
-                  <option value="">Choose a Guide year</option>
-                  {years.map((program) => <option key={program.id} value={program.id}>{yearLabel(program.catalog_year)}</option>)}
-                </select>
-              </label>
-              <p>Use the Guide year listed for this major in DARS.</p>
             </> : supplementalOptions.length > 0 ? <>
               <label>{KINDS[kind]}
-                <select value={supplementalName} required onChange={(event) => {
-                  setSupplementalName(event.target.value);
-                  setSupplementalYear('');
-                }}>
+                <select value={supplementalName} required onChange={(event) => setSupplementalName(event.target.value)}>
                   <option value="">Choose a {kind}</option>
                   {supplementalOptions.map((name) => <option key={name}>{name}</option>)}
                 </select>
               </label>
-              <label>Catalog year
-                <select name="year" required disabled={!supplementalName} value={supplementalYear}
-                  onChange={(event) => setSupplementalYear(event.target.value)}>
-                  <option value="">Choose a Guide year</option>
-                  {supplementalYears.map((program) => (
-                    <option key={program.catalog_year} value={program.catalog_year}>{yearLabel(program.catalog_year)}</option>
-                  ))}
-                </select>
-              </label>
-              <p>Use the Guide year listed for this {kind} in DARS.</p>
               {chosenSupplemental?.source_url?.startsWith('https://guide.wisc.edu/') &&
                 <p><a href={chosenSupplemental.source_url} target="_blank" rel="noreferrer">View requirements in the UW Guide</a></p>}
             </> : (
