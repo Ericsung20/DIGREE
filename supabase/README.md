@@ -75,6 +75,35 @@ npx.cmd --yes supabase@3.1.0 db query --file supabase/.temp/uw-1274/requisites.s
 
 For a hosted import, add `--remote=<project-ref> --yes` to the query command. Use term code `1272` and its output directory for Fall 2026. Enrollment and advisory text come from separate UW fields. The import stores published catalog aliases for cross-listed courses and the source map of requirement groups to class numbers. Run the alias migration before refreshing the import.
 
+### Import academic designations and degree requirements
+
+Apply the academic-requirement catalog migrations first. Download term-scoped designations from UW Course Search & Enroll, then apply the generated batches. Use `1266`, `1272`, or `1274` for the available Summer 2026, Fall 2026, and Spring 2027 datasets.
+
+```powershell
+node supabase/import-uw-term.mjs 1274 designations
+$files = Get-Content -Raw supabase/.temp/uw-1274/designation-files.json | ConvertFrom-Json
+foreach ($file in $files) {
+    npx.cmd --yes supabase@3.1.0 db query --file $file
+    if ($LASTEXITCODE -ne 0) { throw "Designation import failed at $file" }
+}
+npx.cmd --yes supabase@3.1.0 db query --file supabase/uw-academic-requirement-policies.sql
+```
+
+For degree requirements, save the JSON response to `select p.id,p.label,p.catalog_year,c.label as college from public.academic_programs p join public.colleges c on c.id=p.college_id` in `supabase/.temp/program-guides/programs.json`. Save the UW Guide undergraduate indexes as `index-2023.html` through `index-2026.html` in the same directory. Use `https://guide.wisc.edu/undergraduate/` for 2026 and `https://guide.wisc.edu/archive/<start-year>-<end-year>/undergraduate/` for the earlier years.
+
+```powershell
+python supabase/import-uw-program-requirements.py map
+./supabase/fetch-uw-program-guides.ps1
+python supabase/import-uw-program-requirements.py extract
+$files = Get-Content -Raw supabase/.temp/program-guides/program-requirement-files.json | ConvertFrom-Json
+foreach ($file in $files) {
+    npx.cmd --yes supabase@3.1.0 db query --file $file
+    if ($LASTEXITCODE -ne 0) { throw "Program requirement import failed at $file" }
+}
+```
+
+The page downloader requires PowerShell 7. Check the mapping, fetch, and extraction reports before applying batches. For a hosted import, add `--remote=<project-ref> --yes` to the apply commands. The program view identifies listed course options. Open-ended credit ranges, program exceptions and student-specific allocation remain subject to the linked UW Guide and DARS.
+
 ### Refresh published UW instructor names
 
 After applying the instructor-directory migrations, use PowerShell 7 with the term catalog manifest and requisite rows already loaded. The fetch report preserves course IDs with missing names or request failures. The generated SQL stores published names and updates matching scheduler bundles by term, course ID, and bundle ID. UW course IDs outside the planner catalog are saved in `course_instructors_source_only`.

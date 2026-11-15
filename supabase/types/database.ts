@@ -69,6 +69,28 @@ export type Database = {
           },
         ];
       };
+      academic_requirement_policies: {
+        Row: {
+          policy: NonNullable<Json>;
+          policy_key: string;
+          scope: string;
+          source_url: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          policy: NonNullable<Json>;
+          policy_key: string;
+          scope: string;
+          source_url: string;
+        };
+        Update: {
+          policy?: NonNullable<Json>;
+          policy_key?: string;
+          scope?: string;
+          source_url?: string;
+        };
+        Relationships: [];
+      };
       buildings: {
         Row: {
           id: string;
@@ -270,6 +292,60 @@ export type Database = {
             columns: ["post_id"];
             isOneToOne: false;
             referencedRelation: "posts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      course_designations: {
+        Row: {
+          breadth_codes: string[];
+          core_gen_ed_code: string | null;
+          course_code: string;
+          course_id: string;
+          designations: NonNullable<Json>;
+          ethnic_studies_code: string | null;
+          fetched_at: string;
+          general_ed_code: string | null;
+          level_codes: string[];
+          ls_credit_code: string | null;
+          source_url: string;
+          term: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          breadth_codes: string[];
+          core_gen_ed_code?: string | null;
+          course_code: string;
+          course_id: string;
+          designations: NonNullable<Json>;
+          ethnic_studies_code?: string | null;
+          fetched_at: string;
+          general_ed_code?: string | null;
+          level_codes: string[];
+          ls_credit_code?: string | null;
+          source_url: string;
+          term: string;
+        };
+        Update: {
+          breadth_codes?: string[];
+          core_gen_ed_code?: string | null;
+          course_code?: string;
+          course_id?: string;
+          designations?: NonNullable<Json>;
+          ethnic_studies_code?: string | null;
+          fetched_at?: string;
+          general_ed_code?: string | null;
+          level_codes?: string[];
+          ls_credit_code?: string | null;
+          source_url?: string;
+          term?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "course_designations_term_fkey";
+            columns: ["term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
             referencedColumns: ["id"];
           },
         ];
@@ -673,6 +749,39 @@ export type Database = {
           },
         ];
       };
+      program_requirement_catalog: {
+        Row: {
+          course_groups: NonNullable<Json>;
+          extraction_method: string;
+          fetched_at: string;
+          program_id: string;
+          source_url: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          course_groups: NonNullable<Json>;
+          extraction_method: string;
+          fetched_at: string;
+          program_id: string;
+          source_url: string;
+        };
+        Update: {
+          course_groups?: NonNullable<Json>;
+          extraction_method?: string;
+          fetched_at?: string;
+          program_id?: string;
+          source_url?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "program_requirement_catalog_program_id_fkey";
+            columns: ["program_id"];
+            isOneToOne: true;
+            referencedRelation: "academic_programs";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       saved_schedule_items: {
         Row: {
           bundle_id: string;
@@ -1013,6 +1122,28 @@ export type Database = {
             columns: ["course_id"];
             isOneToOne: false;
             referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      program_requirement_course_options: {
+        Row: {
+          catalog_year: number;
+          course_code: string | null;
+          extraction_method: string;
+          listing_kind: string | null;
+          program: string;
+          program_id: string;
+          requirement_group: string | null;
+          source_url: string;
+        };
+        ComputedFields: never;
+        Relationships: [
+          {
+            foreignKeyName: "program_requirement_catalog_program_id_fkey";
+            columns: ["program_id"];
+            isOneToOne: true;
+            referencedRelation: "academic_programs";
             referencedColumns: ["id"];
           },
         ];

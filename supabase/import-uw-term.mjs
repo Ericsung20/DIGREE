@@ -4,8 +4,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { asSql, getJson, normalizePackage, gradeStats, enroll } from './import-uw-catalog.mjs';
 
 const [, , termCode = '1274', phase = 'catalog'] = process.argv;
-if (!/^\d{4}$/.test(termCode) || !['catalog', 'detail', 'sections', 'requisites'].includes(phase)) {
-  throw new Error('Usage: node supabase/import-uw-term.mjs TERM catalog|detail|sections|requisites');
+if (!/^\d{4}$/.test(termCode) || !['catalog', 'detail', 'sections', 'requisites', 'designations'].includes(phase)) {
+  throw new Error('Usage: node supabase/import-uw-term.mjs TERM catalog|detail|sections|requisites|designations');
 }
 const directory = resolve(import.meta.dirname, '.temp', 'uw-' + termCode);
 const manifestPath = join(directory, 'manifest.json');
@@ -27,14 +27,14 @@ async function readIfPresent(path) {
 
 async function collectCatalog() {
   const term = (await getJson(enroll + '/terms')).find(row => row.termCode === termCode);
-  if (!term) throw new Error('Term is absent from UW public search: ' + termCode);
+  if (!term && phase !== 'designations') throw new Error('Term is absent from UW public search: ' + termCode);
   const rows = [];
   const pageSize = 500;
   for (let page = 1; ; page++) {
     const result = await getJson(enroll, {
       selectedTerm: termCode, queryString: '*', filters: [], page, pageSize, sortOrder: 'SUBJECT',
     });
-    if (!result.hits.length && rows.length < result.found) throw new Error('Incomplete UW search response');
+    if (!result.hits?.length || result.hits.some(hit => hit.termCode !== termCode)) throw new Error('Incomplete or mismatched UW search response');
     rows.push(...result.hits);
     if (rows.length >= result.found) break;
     await delay(200);
@@ -73,8 +73,8 @@ async function collectCatalog() {
     });
     codes.add(code);
   }
-  const manifest = { term: { id: termCode, label: term.longDescription }, entries: [...entries.values()] };
-  return {manifest, requisites, summary: {searchRows: rows.length, courses: entries.size, topics, duplicates, unsupported}};
+  const manifest = { term: { id: termCode, label: term?.longDescription }, entries: [...entries.values()] };
+  return {manifest, requisites, rows, summary: {searchRows: rows.length, courses: entries.size, topics, duplicates, unsupported}};
 }
 
 async function catalog() {
@@ -116,6 +116,49 @@ where course_requisites.fetched_at <= excluded.fetched_at;`);
     enrollment: rows.filter(row => row.enrollment_requisites).length,
     advisory: rows.filter(row => row.advisory_requisites).length,
   }));
+}
+
+async function designations() {
+  const {rows} = await collectCatalog();
+  const details = new Map();
+  const tag = (value) => typeof value?.code === 'string' ? {code: value.code, label: value.description ?? null} : null;
+  for (const hit of rows) {
+    if (!hit.courseDesignation || !/^\d+(?:\.[\w-]+)?$/.test(hit.courseId) || details.has(hit.courseId)) continue;
+    const attributes = {
+      breadth: (hit.breadths ?? []).map(tag).filter(Boolean),
+      general_ed: tag(hit.generalEd),
+      core_gen_ed: tag(hit.coreGeneralEducation),
+      ethnic_studies: tag(hit.ethnicStudies),
+      ls_credit: tag(hit.lettersAndScienceCredits),
+      levels: (hit.levels ?? []).map(tag).filter(Boolean),
+    };
+    details.set(hit.courseId, {
+      course_id: 'uw-' + hit.courseId,
+      course_code: hit.courseDesignation,
+      breadth_codes: attributes.breadth.map(item => item.code),
+      general_ed_code: attributes.general_ed?.code ?? null,
+      core_gen_ed_code: attributes.core_gen_ed?.code ?? null,
+      ethnic_studies_code: attributes.ethnic_studies?.code ?? null,
+      ls_credit_code: attributes.ls_credit?.code ?? null,
+      level_codes: attributes.levels.map(item => item.code),
+      designations: attributes,
+    });
+  }
+  const data = [...details.values()];
+  const files = [];
+  for (let start = 0; start < data.length; start += 1000) {
+    const json = JSON.stringify(data.slice(start, start + 1000)).replaceAll('\\', '\\\\').replaceAll("'", "''");
+    const file = join(directory, 'designations-' + String(files.length + 1).padStart(3, '0') + '.sql');
+    await writeAtomic(file, 'insert into public.course_designations (term, course_id, course_code, breadth_codes, general_ed_code, core_gen_ed_code, ethnic_studies_code, ls_credit_code, level_codes, designations, source_url, fetched_at)\n'
+      + "select '"+termCode+"', r.course_id, r.course_code, r.breadth_codes, r.general_ed_code, r.core_gen_ed_code, r.ethnic_studies_code, r.ls_credit_code, r.level_codes, r.designations, '"+enroll+"', '"+fetched_at+"'::timestamptz\n"
+      + "from jsonb_to_recordset(E'"+json+"'::jsonb) as r(course_id text, course_code text, breadth_codes text[], general_ed_code text, core_gen_ed_code text, ethnic_studies_code text, ls_credit_code text, level_codes text[], designations jsonb)\n"
+      + 'on conflict (term, course_id) do update set course_code=excluded.course_code, breadth_codes=excluded.breadth_codes, general_ed_code=excluded.general_ed_code, core_gen_ed_code=excluded.core_gen_ed_code, ethnic_studies_code=excluded.ethnic_studies_code, ls_credit_code=excluded.ls_credit_code, level_codes=excluded.level_codes, designations=excluded.designations, source_url=excluded.source_url, fetched_at=excluded.fetched_at\n'
+      + 'where course_designations.fetched_at <= excluded.fetched_at;');
+    files.push(file);
+  }
+  await writeAtomic(join(directory, 'designation-files.json'), JSON.stringify(files));
+  await writeAtomic(join(directory, 'designations.json'), JSON.stringify(data));
+  console.log(JSON.stringify({term: termCode, courses: data.length, multipleBreadth: data.filter(row => row.breadth_codes.length > 1).length}));
 }
 
 async function details() {
@@ -189,4 +232,5 @@ async function sections() {
 if (phase === 'catalog') await catalog();
 else if (phase === 'sections') await sections();
 else if (phase === 'requisites') await requisites();
+else if (phase === 'designations') await designations();
 else await details();
