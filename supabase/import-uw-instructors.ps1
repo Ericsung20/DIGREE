@@ -84,18 +84,25 @@ $files = @(for ($offset = 0; $offset -lt $rows.Count; $offset += $batchSize) {
     $json = (ConvertTo-Json -InputObject $batch -Depth 4 -Compress).Replace($slash, $slash + $slash).Replace("'", "''")
     $sql = @"
 with fetched as (
-    select '$Term' as term, incoming.course_id, incoming.bundle_id, incoming.instructors
+    select '$Term' as term, incoming.course_id, incoming.bundle_id, incoming.instructors, course.id is not null as linked
     from jsonb_to_recordset(E'$json'::jsonb) as incoming(course_id text, bundle_id text, instructors text[])
-    join public.courses as course on course.id=incoming.course_id and course.source='uw_public_course_search'
-    where cardinality(incoming.instructors)>0
+    left join public.courses as course on course.id=incoming.course_id and course.source='uw_public_course_search'
+    where incoming.course_id ~ '^uw-[0-9]+$' and cardinality(incoming.instructors)>0
 ), saved as (
     insert into public.course_instructors(term, course_id, bundle_id, instructors, source_url, fetched_at)
     select term, course_id, bundle_id, instructors, 'https://public.enroll.wisc.edu/search', '$fetchTime'::timestamptz
-    from fetched
+    from fetched where linked
     on conflict (term, course_id, bundle_id) do update
     set instructors=excluded.instructors, source_url=excluded.source_url, fetched_at=excluded.fetched_at
     where course_instructors.fetched_at <= excluded.fetched_at
     returning term, course_id, bundle_id, instructors
+), source_only as (
+    insert into public.course_instructors_source_only(term, course_id, bundle_id, instructors, source_url, fetched_at)
+    select term, course_id, bundle_id, instructors, 'https://public.enroll.wisc.edu/search', '$fetchTime'::timestamptz
+    from fetched where not linked
+    on conflict (term, course_id, bundle_id) do update
+    set instructors=excluded.instructors, source_url=excluded.source_url, fetched_at=excluded.fetched_at
+    where course_instructors_source_only.fetched_at <= excluded.fetched_at
 )
 update public.section_bundles as bundle
 set instructors = saved.instructors

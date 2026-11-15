@@ -77,7 +77,7 @@ For a hosted import, add `--remote=<project-ref> --yes` to the query command. Us
 
 ### Refresh published UW instructor names
 
-After applying the instructor-directory migration, use PowerShell 7 with the term catalog manifest and requisite rows already loaded. The fetch report preserves course IDs with missing names or request failures. The generated SQL stores published names and updates matching scheduler bundles by term, course ID, and bundle ID.
+After applying the instructor-directory migrations, use PowerShell 7 with the term catalog manifest and requisite rows already loaded. The fetch report preserves course IDs with missing names or request failures. The generated SQL stores published names and updates matching scheduler bundles by term, course ID, and bundle ID. UW course IDs outside the planner catalog are saved in `course_instructors_source_only`.
 
 ```powershell
 node supabase/import-uw-term.mjs 1274 catalog

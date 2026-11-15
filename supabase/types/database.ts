@@ -359,6 +359,21 @@ export type Database = {
           },
         ];
       };
+      course_instructors_source_only: {
+        Row: Database["public"]["Tables"]["course_instructors"]["Row"];
+        ComputedFields: never;
+        Insert: Database["public"]["Tables"]["course_instructors"]["Insert"];
+        Update: Database["public"]["Tables"]["course_instructors"]["Update"];
+        Relationships: [
+          {
+            foreignKeyName: "course_instructors_source_only_term_fkey";
+            columns: ["term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       course_requisites: {
         Row: {
           advisory_requisites: string | null;
