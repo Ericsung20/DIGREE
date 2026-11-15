@@ -64,6 +64,17 @@ Apply the completed batches to the chosen cloud project with:
 
 Run the command again after more detail files are generated. The script keeps a separate completion marker for each target. For a fresh local database, run without `-ProjectRef`. The full catalog can share course codes with the fixture seed, so load the full catalog into a database without the fixture courses.
 
+### Import UW course requisites
+
+Apply the `create_course_requisites` migration and load the term catalog first. The requisites phase uses the same public UW search and canonical course selection as the catalog import. It writes only new or updated rows in `course_requisites` for existing UW course IDs.
+
+```powershell
+node supabase/import-uw-term.mjs 1274 requisites
+npx.cmd --yes supabase@3.1.0 db query --file supabase/.temp/uw-1274/requisites.sql
+```
+
+For a hosted import, add `--remote=<project-ref> --yes` to the query command. Use term code `1272` and its output directory for Fall 2026. Enrollment and advisory text come from separate UW fields. Requirement groups preserve the published group IDs and associated class numbers. Evaluate those descriptions and section-specific rules separately before adding new scheduler checks.
+
 ## Import UW walking estimates
 
 Run the UW catalog phase and apply the term's meeting data first. The importer reads building coordinates from UW Course Search & Enroll and routes them with Valhalla's pedestrian profile on an OpenStreetMap extract. Reviewed term-specific location exceptions and their sources are recorded in uw-walking-location-review.json. It stores each direction separately and rounds seconds up to whole minutes. Unresolved coordinates or routes stay out of the matrix. The estimates cover mapped pedestrian paths between building coordinates. They exclude classroom-to-door time.

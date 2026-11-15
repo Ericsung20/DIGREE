@@ -316,6 +316,52 @@ export type Database = {
           },
         ];
       };
+      course_requisites: {
+        Row: {
+          advisory_requisites: string | null;
+          course_id: string;
+          enrollment_requisites: string | null;
+          fetched_at: string;
+          requirement_groups: Json | null;
+          source_url: string;
+          term: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          advisory_requisites?: string | null;
+          course_id: string;
+          enrollment_requisites?: string | null;
+          fetched_at: string;
+          requirement_groups?: Json | null;
+          source_url: string;
+          term: string;
+        };
+        Update: {
+          advisory_requisites?: string | null;
+          course_id?: string;
+          enrollment_requisites?: string | null;
+          fetched_at?: string;
+          requirement_groups?: Json | null;
+          source_url?: string;
+          term?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "course_requisites_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "course_requisites_term_fkey";
+            columns: ["term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       courses: {
         Row: {
           breadth: string[] | null;

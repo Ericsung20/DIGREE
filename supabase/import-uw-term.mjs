@@ -4,8 +4,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { asSql, getJson, normalizePackage, gradeStats, enroll } from './import-uw-catalog.mjs';
 
 const [, , termCode = '1274', phase = 'catalog'] = process.argv;
-if (!/^\d{4}$/.test(termCode) || !['catalog', 'detail', 'sections'].includes(phase)) {
-  throw new Error('Usage: node supabase/import-uw-term.mjs TERM catalog|detail|sections');
+if (!/^\d{4}$/.test(termCode) || !['catalog', 'detail', 'sections', 'requisites'].includes(phase)) {
+  throw new Error('Usage: node supabase/import-uw-term.mjs TERM catalog|detail|sections|requisites');
 }
 const directory = resolve(import.meta.dirname, '.temp', 'uw-' + termCode);
 const manifestPath = join(directory, 'manifest.json');
@@ -25,7 +25,7 @@ async function readIfPresent(path) {
   }
 }
 
-async function catalog() {
+async function collectCatalog() {
   const term = (await getJson(enroll + '/terms')).find(row => row.termCode === termCode);
   if (!term) throw new Error('Term is absent from UW public search: ' + termCode);
   const rows = [];
@@ -41,6 +41,7 @@ async function catalog() {
   }
 
   const entries = new Map();
+  const requisites = [];
   const codes = new Set();
   let topics = 0, duplicates = 0, unsupported = 0;
   const pilotCodes = new Set(['COMP SCI 300', 'COMP SCI 577', 'MATH 221', 'STAT 301']);
@@ -61,9 +62,20 @@ async function catalog() {
       repeatable: hit.repeatable === 'Y', source: 'uw_public_course_search', fetched_at,
     };
     entries.set(courseId, { course, courseId, subject: hit.subject, catalogNumber: hit.catalogNumber, courseDesignation: code });
+    requisites.push({
+      course_id: course.id,
+      enrollment_requisites: hit.enrollmentPrerequisites?.trim() || null,
+      advisory_requisites: hit.advisoryPrerequisites?.trim() || null,
+      requirement_groups: hit.courseRequirements ?? null,
+    });
     codes.add(code);
   }
   const manifest = { term: { id: termCode, label: term.longDescription }, entries: [...entries.values()] };
+  return {manifest, requisites, summary: {searchRows: rows.length, courses: entries.size, topics, duplicates, unsupported}};
+}
+
+async function catalog() {
+  const {manifest, summary} = await collectCatalog();
   await writeAtomic(manifestPath, JSON.stringify(manifest));
   const batchSize = 800;
   for (let offset = 0; offset < manifest.entries.length; offset += batchSize) {
@@ -72,7 +84,34 @@ async function catalog() {
     await writeAtomic(join(directory, 'catalog-' + number + '.sql'),
       asSql({ term: manifest.term, courses, packages: [], stats: [], buildings: [] }));
   }
-  console.log(JSON.stringify({ searchRows: rows.length, courses: entries.size, topics, duplicates, unsupported }));
+  console.log(JSON.stringify(summary));
+}
+
+async function requisites() {
+  const {requisites: rows, summary} = await collectCatalog();
+  const json = JSON.stringify(rows).replaceAll('\\', '\\\\').replaceAll("'", "''");
+  await writeAtomic(join(directory, 'requisites.sql'), `insert into public.course_requisites (
+  term, course_id, enrollment_requisites, advisory_requisites, requirement_groups, source_url, fetched_at
+)
+select '${termCode}', course.id, req.enrollment_requisites, req.advisory_requisites, req.requirement_groups,
+  '${enroll}', '${fetched_at}'::timestamptz
+from jsonb_to_recordset(E'${json}'::jsonb) as req(
+  course_id text, enrollment_requisites text, advisory_requisites text, requirement_groups jsonb
+)
+join public.courses as course on course.id = req.course_id and course.source = 'uw_public_course_search'
+on conflict (term, course_id) do update set
+  enrollment_requisites = excluded.enrollment_requisites,
+  advisory_requisites = excluded.advisory_requisites,
+  requirement_groups = excluded.requirement_groups,
+  source_url = excluded.source_url,
+  fetched_at = excluded.fetched_at
+where course_requisites.fetched_at <= excluded.fetched_at;`);
+  await writeAtomic(join(directory, 'requisites.json'), JSON.stringify(rows));
+  console.log(JSON.stringify({
+    ...summary,
+    enrollment: rows.filter(row => row.enrollment_requisites).length,
+    advisory: rows.filter(row => row.advisory_requisites).length,
+  }));
 }
 
 async function details() {
@@ -145,4 +184,5 @@ async function sections() {
 
 if (phase === 'catalog') await catalog();
 else if (phase === 'sections') await sections();
+else if (phase === 'requisites') await requisites();
 else await details();
