@@ -1,0 +1,470 @@
+"""The HTTP surface against the shared contract and fixtures."""
+
+import copy
+from typing import get_args
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+
+from app import engine, models
+from app.main import app
+from tests.builders import (
+    CONTRACT_PATH,
+    FIXTURE_EXPECTED_PATH,
+    FIXTURE_REQUEST_PATH,
+    REPO_ROOT,
+    bundle,
+    course,
+    load_fixture_expected,
+    load_fixture_request,
+    meeting,
+)
+
+GENERATE = "/v1/schedules/generate"
+
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(app)
+
+
+@pytest.fixture
+def fixture_request() -> dict:
+    return load_fixture_request()
+
+
+@pytest.fixture(scope="module")
+def contract() -> dict:
+    return yaml.safe_load(CONTRACT_PATH.read_text())
+
+
+# --------------------------------------------------------------------------
+# Fixture and endpoints
+# --------------------------------------------------------------------------
+
+
+def test_health(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "contract_version": "1.0"}
+
+
+def test_fixture_request_returns_expected_response_exactly(client, fixture_request):
+    """T01: the whole body matches, including metrics and diagnostics."""
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    assert response.json() == load_fixture_expected()
+
+
+def test_fixture_top_three(client, fixture_request):
+    results = client.post(GENERATE, json=fixture_request).json()["results"]
+    summary = [
+        (
+            r["rank"],
+            [s["bundle_id"] for s in r["selected"]],
+            r["metrics"]["walking_minutes_weekly"],
+            r["score"],
+        )
+        for r in results
+    ]
+    assert summary == [
+        (1, ["cs400-B", "math234-B", "stat240-A"], 0, 100.0),
+        (2, ["cs400-A", "math234-A", "stat240-A"], 12, 67.03),
+        (3, ["cs400-A", "math234-B", "stat240-A"], 36, 30.12),
+    ]
+
+
+def test_fixture_rejects_the_overlapping_combination(client, fixture_request):
+    body = client.post(GENERATE, json=fixture_request).json()
+    assert body["diagnostics"] == {
+        "explored_combinations": 4,
+        "rejected_by_reason": {"time_overlap": 1},
+        "search_truncated": False,
+        "no_results_reasons": [],
+    }
+    chosen = [{s["bundle_id"] for s in r["selected"]} for r in body["results"]]
+    assert not any({"cs400-B", "math234-A"} <= bundles for bundles in chosen)
+
+
+def test_no_feasible_schedule_is_a_200_with_empty_results(client, fixture_request):
+    """T15: an empty result is a business answer, not an error."""
+    fixture_request["constraints"]["earliest_start_min"] = 700
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"] == []
+    assert body["diagnostics"]["explored_combinations"] == 4
+    assert body["diagnostics"]["rejected_by_reason"] == {"outside_time_window": 4}
+    assert body["diagnostics"]["no_results_reasons"] == ["outside_time_window"]
+
+
+# --------------------------------------------------------------------------
+# Shared files and schema drift
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "canonical, duplicate",
+    [
+        (CONTRACT_PATH, REPO_ROOT / "contracts" / "DIGREE_API_CONTRACT_v1.yaml"),
+        (FIXTURE_REQUEST_PATH, REPO_ROOT / "fixtures" / "DIGREE_fixture_request.json"),
+        (FIXTURE_EXPECTED_PATH, REPO_ROOT / "fixtures" / "DIGREE_fixture_expected_response.json"),
+    ],
+    ids=["contract", "request", "expected"],
+)
+def test_duplicate_shared_files_have_not_drifted(canonical, duplicate):
+    if not duplicate.exists():
+        pytest.skip(f"{duplicate.name} is no longer in the repository")
+    assert canonical.read_bytes() == duplicate.read_bytes()
+
+
+def test_fixtures_validate_against_the_models():
+    models.GenerateRequest.model_validate(load_fixture_request())
+    models.GenerateResponse.model_validate(load_fixture_expected())
+
+
+SCHEMA_MODELS = {
+    "Meeting": models.Meeting,
+    "SectionBundle": models.SectionBundle,
+    "GradeStats": models.GradeStats,
+    "CandidateCourse": models.CandidateCourse,
+    "Constraints": models.Constraints,
+    "Weights": models.Weights,
+    "Preferences": models.Preferences,
+    "WalkingEdge": models.WalkingEdge,
+    "GenerateRequest": models.GenerateRequest,
+    "SelectedBundle": models.SelectedBundle,
+    "Metrics": models.Metrics,
+    "ScheduleResult": models.ScheduleResult,
+    "Diagnostics": models.Diagnostics,
+    "GenerateResponse": models.GenerateResponse,
+    "ApiError": models.ApiError,
+}
+
+
+def _bounds(schema: dict) -> dict:
+    """Numeric and length limits of a property, looking through nullable wrappers."""
+    keys = ("minimum", "maximum", "minLength", "minItems")
+    found = {key: schema[key] for key in keys if key in schema}
+    for option in schema.get("anyOf", []):
+        found.update(_bounds(option))
+    if "items" in schema:
+        found.update({f"items.{key}": value for key, value in _bounds(schema["items"]).items()})
+    return found
+
+
+@pytest.mark.parametrize("name", SCHEMA_MODELS)
+def test_model_matches_contract_schema(contract, name):
+    schema = contract["components"]["schemas"][name]
+    model = SCHEMA_MODELS[name]
+    required = {field for field, info in model.model_fields.items() if info.is_required()}
+
+    assert set(model.model_fields) == set(schema["properties"])
+    assert required == set(schema.get("required", []))
+
+    generated = model.model_json_schema()["properties"]
+    for field, contract_property in schema["properties"].items():
+        assert _bounds(generated[field]) == _bounds(contract_property), field
+
+
+def test_enums_match_contract(contract):
+    schemas = contract["components"]["schemas"]
+
+    def enum(schema: str, field: str) -> list[str]:
+        return schemas[schema]["properties"][field]["enum"]
+
+    assert list(get_args(models.Day)) == schemas["Day"]["enum"]
+    assert list(get_args(models.Mode)) == schemas["Mode"]["enum"]
+    assert list(get_args(models.SeatStatus)) == enum("SectionBundle", "seat_status")
+    assert list(get_args(models.EligibilityStatus)) == enum("CandidateCourse", "eligibility_status")
+    assert list(get_args(models.ResultStatus)) == enum("ScheduleResult", "status")
+    assert list(get_args(models.ContractVersion)) == enum("GenerateRequest", "contract_version")
+    assert list(get_args(models.ContractVersion)) == enum("GenerateResponse", "contract_version")
+
+
+def test_contract_paths_are_served(contract):
+    served = app.openapi()["paths"]
+    for path, operations in contract["paths"].items():
+        for method, operation in operations.items():
+            assert served[path][method]["operationId"] == operation["operationId"]
+            assert set(operation["responses"]) <= set(served[path][method]["responses"])
+
+
+# --------------------------------------------------------------------------
+# 422: malformed or internally inconsistent input
+# --------------------------------------------------------------------------
+
+
+def _first_meeting(request: dict) -> dict:
+    return request["courses"][0]["section_bundles"][0]["meetings"][0]
+
+
+INVALID_REQUESTS = {
+    "missing field": (lambda r: r.pop("term"), "term: "),
+    "unknown field": (lambda r: r.update(user_id="u1"), "user_id: "),
+    "wrong contract version": (lambda r: r.update(contract_version="2.0"), "contract_version: "),
+    "top_k above 5": (lambda r: r.update(top_k=6), "top_k: "),
+    "top_k below 1": (lambda r: r.update(top_k=0), "top_k: "),
+    "float for integer": (lambda r: r.update(top_k=3.0), "top_k: "),
+    "empty request_id": (lambda r: r.update(request_id=""), "request_id: "),
+    "empty courses": (lambda r: r.update(courses=[]), "courses: "),
+    "string for integer": (
+        lambda r: r["constraints"].update(min_credits="10"),
+        "constraints.min_credits: ",
+    ),
+    "boolean for integer": (
+        lambda r: r["constraints"].update(walking_buffer_min=True),
+        "constraints.walking_buffer_min: ",
+    ),
+    "min_credits above max_credits": (
+        lambda r: r["constraints"].update(min_credits=12),
+        "constraints: min_credits must be less than or equal to max_credits",
+    ),
+    "duplicate blocked days": (
+        lambda r: r["constraints"].update(blocked_days=["FRI", "FRI"]),
+        "constraints: blocked_days must be unique",
+    ),
+    "unknown day": (
+        lambda r: _first_meeting(r).update(day="Mon"),
+        "courses[0].section_bundles[0].meetings[0].day: ",
+    ),
+    "start not before end": (
+        lambda r: _first_meeting(r).update(start_min=650),
+        "courses[0].section_bundles[0].meetings[0]: start_min must be less than end_min",
+    ),
+    "start out of range": (
+        lambda r: _first_meeting(r).update(start_min=-1),
+        "courses[0].section_bundles[0].meetings[0].start_min: ",
+    ),
+    "empty credit options": (
+        lambda r: r["courses"][0].update(credit_options=[]),
+        "courses[0].credit_options: ",
+    ),
+    "credit option out of range": (
+        lambda r: r["courses"][0].update(credit_options=[0]),
+        "courses[0].credit_options[0]: ",
+    ),
+    "duplicate course_id": (
+        lambda r: r["courses"][1].update(course_id="cs400"),
+        "duplicate course_id: cs400",
+    ),
+    "duplicate bundle_id in a course": (
+        lambda r: r["courses"][0]["section_bundles"][1].update(bundle_id="cs400-A"),
+        "courses[0]: duplicate bundle_id within course: cs400-A",
+    ),
+    "all weights zero": (
+        lambda r: r["preferences"]["weights"].update(walking=0),
+        "preferences.weights: at least one weight must be greater than 0",
+    ),
+    "negative weight": (
+        lambda r: r["preferences"]["weights"].update(idle_gap=-0.1),
+        "preferences.weights.idle_gap: ",
+    ),
+    "weight above 1": (
+        lambda r: r["preferences"]["weights"].update(walking=1.5),
+        "preferences.weights.walking: ",
+    ),
+    "negative walking minutes": (
+        lambda r: r["walking_edges"][0].update(minutes=-1),
+        "walking_edges[0].minutes: ",
+    ),
+    "conflicting walking edges": (
+        lambda r: r["walking_edges"].append(
+            {"from_building_id": "ALPHA", "to_building_id": "BETA", "minutes": 9}
+        ),
+        "conflicting walking edges for ALPHA -> BETA: 6 and 9 minutes",
+    ),
+    "one-way edge conflicts with two-way edge": (
+        lambda r: r["walking_edges"].append(
+            {
+                "from_building_id": "BETA",
+                "to_building_id": "ALPHA",
+                "minutes": 9,
+                "bidirectional": False,
+            }
+        ),
+        "conflicting walking edges for BETA -> ALPHA: 6 and 9 minutes",
+    ),
+    "non-zero walk within one building": (
+        lambda r: r["walking_edges"].append(
+            {"from_building_id": "ALPHA", "to_building_id": "ALPHA", "minutes": 2}
+        ),
+        "walking edge ALPHA -> ALPHA must be 0 minutes for the same building",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", INVALID_REQUESTS)
+def test_invalid_request_returns_422(client, fixture_request, case):
+    mutate, expected_detail = INVALID_REQUESTS[case]
+    mutate(fixture_request)
+
+    response = client.post(GENERATE, json=fixture_request)
+
+    assert response.status_code == 422
+    body = response.json()
+    assert set(body) == {"error"}
+    assert body["error"]["code"] == "validation_error"
+    assert body["error"]["message"] == "Request validation failed."
+    assert any(expected_detail in detail for detail in body["error"]["details"]), body
+
+
+def test_malformed_json_returns_422(client):
+    response = client.post(
+        GENERATE, content=b'{"contract_version": ', headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert response.json()["error"]["details"][0].startswith("body: ")
+
+
+def test_identical_duplicate_walking_edges_are_accepted(client, fixture_request):
+    fixture_request["walking_edges"].append(copy.deepcopy(fixture_request["walking_edges"][0]))
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    assert response.json() == load_fixture_expected()
+
+
+# --------------------------------------------------------------------------
+# 503 not_implemented: behaviour deferred to later milestones
+# --------------------------------------------------------------------------
+
+
+def _first_bundle(request: dict) -> dict:
+    return request["courses"][0]["section_bundles"][0]
+
+
+def _optional_course(**overrides) -> dict:
+    return course(
+        "art100",
+        [bundle("art100-A", [meeting("FRI", 600, 650, "ALPHA")])],
+        is_required=False,
+        **overrides,
+    )
+
+
+UNSUPPORTED_REQUESTS = {
+    "grade_outcomes weight": (
+        lambda r: r["preferences"]["weights"].update(grade_outcomes=0.5),
+        "preferences.weights.grade_outcomes: ",
+    ),
+    "degree_fit weight": (
+        lambda r: r["preferences"]["weights"].update(degree_fit=0.5),
+        "preferences.weights.degree_fit: ",
+    ),
+    "instructor weight": (
+        lambda r: r["preferences"]["weights"].update(instructor=1),
+        "preferences.weights.instructor: ",
+    ),
+    "optional courses needed for credits": (
+        lambda r: r["courses"][2].update(is_required=False),
+        "courses: required courses cannot reach the credit range",
+    ),
+    "no required course at all": (
+        lambda r: (
+            [c.update(is_required=False) for c in r["courses"]],
+            r["constraints"].update(min_credits=0),
+        ),
+        "courses: no course is required",
+    ),
+    "required course with unknown eligibility": (
+        lambda r: r["courses"][1].update(eligibility_status="unknown"),
+        "courses[1].eligibility_status: ",
+    ),
+    "required course that is ineligible": (
+        lambda r: r["courses"][1].update(eligibility_status="ineligible"),
+        "courses[1].eligibility_status: ",
+    ),
+    "required course completed and not repeatable": (
+        lambda r: r["courses"][0].update(already_completed=True),
+        "courses[0].already_completed: ",
+    ),
+    "unknown seat status": (
+        lambda r: _first_bundle(r).update(seat_status="unknown"),
+        "courses[0].section_bundles[0].seat_status: ",
+    ),
+    "full section with exclusion enabled": (
+        lambda r: (
+            _first_bundle(r).update(seat_status="full"),
+            r["constraints"].update(exclude_full_sections=True),
+        ),
+        "courses[0].section_bundles[0].seat_status: ",
+    ),
+    "online_sync meeting": (
+        lambda r: _first_meeting(r).update(mode="online_sync", building_id=None),
+        "courses[0].section_bundles[0].meetings[0].mode: ",
+    ),
+    "hybrid meeting": (
+        lambda r: _first_meeting(r).update(mode="hybrid"),
+        "courses[0].section_bundles[0].meetings[0].mode: ",
+    ),
+    "in-person meeting without a building": (
+        lambda r: _first_meeting(r).update(building_id=None),
+        "courses[0].section_bundles[0].meetings[0].building_id: ",
+    ),
+    "missing walking edge on a surviving schedule": (
+        lambda r: r["walking_edges"].pop(0),
+        "walking_edges: no walking time from ALPHA to BETA",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", UNSUPPORTED_REQUESTS)
+def test_unsupported_request_returns_503_not_implemented(client, fixture_request, case):
+    mutate, expected_detail = UNSUPPORTED_REQUESTS[case]
+    mutate(fixture_request)
+
+    response = client.post(GENERATE, json=fixture_request)
+
+    assert response.status_code == 503
+    body = response.json()
+    assert set(body) == {"error"}
+    assert body["error"]["code"] == "not_implemented"
+    assert any(expected_detail in detail for detail in body["error"]["details"]), body
+
+
+SUPPORTED_VARIATIONS = {
+    "optional course that is not needed": lambda r: r["courses"].append(_optional_course()),
+    "unused optional course with unknown data": lambda r: r["courses"].append(
+        _optional_course(eligibility_status="unknown")
+    ),
+    "completed but repeatable required course": lambda r: r["courses"][0].update(
+        already_completed=True, repeatable=True
+    ),
+    "full section while exclusion is off": lambda r: _first_bundle(r).update(seat_status="full"),
+    "exclusion on with no full sections": lambda r: r["constraints"].update(
+        exclude_full_sections=True
+    ),
+    "optional fields omitted": lambda r: (
+        r["constraints"].pop("exclude_full_sections"),
+        [e.pop("bidirectional") for e in r["walking_edges"]],
+        [c.pop("requirement_fit") and None for c in r["courses"]],
+        [c.pop("grade_stats") and None for c in r["courses"]],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", SUPPORTED_VARIATIONS)
+def test_variation_that_needs_no_new_behaviour_still_matches_fixture(client, fixture_request, case):
+    SUPPORTED_VARIATIONS[case](fixture_request)
+    response = client.post(GENERATE, json=fixture_request)
+    assert response.status_code == 200
+    assert response.json() == load_fixture_expected()
+
+
+def test_unexpected_failure_returns_503_internal_error(fixture_request, monkeypatch):
+    def explode(_):
+        raise RuntimeError("secret internal detail")
+
+    monkeypatch.setattr(engine, "generate", explode)
+    response = TestClient(app, raise_server_exceptions=False).post(GENERATE, json=fixture_request)
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "internal_error",
+            "message": "The optimizer could not process the request.",
+            "details": [],
+        }
+    }
