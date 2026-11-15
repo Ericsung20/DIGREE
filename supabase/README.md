@@ -75,6 +75,22 @@ npx.cmd --yes supabase@3.1.0 db query --file supabase/.temp/uw-1274/requisites.s
 
 For a hosted import, add `--remote=<project-ref> --yes` to the query command. Use term code `1272` and its output directory for Fall 2026. Enrollment and advisory text come from separate UW fields. The import stores published catalog aliases for cross-listed courses and the source map of requirement groups to class numbers. Run the alias migration before refreshing the import.
 
+### Refresh published UW instructor names
+
+After applying the instructor-directory migration, use PowerShell 7 with the term catalog manifest and requisite rows already loaded. The fetch report preserves course IDs with missing names or request failures. The generated SQL stores published names and updates matching scheduler bundles by term, course ID, and bundle ID.
+
+```powershell
+node supabase/import-uw-term.mjs 1274 catalog
+./supabase/import-uw-instructors.ps1 -Term 1274
+$files = Get-Content -Raw supabase/.temp/uw-1274/instructor-files.json | ConvertFrom-Json
+foreach ($file in $files) {
+    npx.cmd --yes supabase@3.1.0 db query --file $file
+    if ($LASTEXITCODE -ne 0) { throw "Instructor import failed at $file" }
+}
+```
+
+For the cloud, supply `-ProjectRef` to the fetch script and `--remote=<project-ref> --yes` to each query. A package with no published display names leaves the current names in place. Course and meeting data are maintained by the separate catalog and section imports.
+
 ## Import UW walking estimates
 
 Run the UW catalog phase and apply the term's meeting data first. The importer reads building coordinates from UW Course Search & Enroll and routes them with Valhalla's pedestrian profile on an OpenStreetMap extract. Reviewed term-specific location exceptions and their sources are recorded in uw-walking-location-review.json. It stores each direction separately and rounds seconds up to whole minutes. Unresolved coordinates or routes stay out of the matrix. The estimates cover mapped pedestrian paths between building coordinates. They exclude classroom-to-door time.

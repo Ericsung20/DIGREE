@@ -316,6 +316,49 @@ export type Database = {
           },
         ];
       };
+      course_instructors: {
+        Row: {
+          bundle_id: string;
+          course_id: string;
+          fetched_at: string;
+          instructors: string[];
+          source_url: string;
+          term: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          bundle_id: string;
+          course_id: string;
+          fetched_at: string;
+          instructors: string[];
+          source_url: string;
+          term: string;
+        };
+        Update: {
+          bundle_id?: string;
+          course_id?: string;
+          fetched_at?: string;
+          instructors?: string[];
+          source_url?: string;
+          term?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "course_instructors_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "course_instructors_term_fkey";
+            columns: ["term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       course_requisites: {
         Row: {
           advisory_requisites: string | null;
