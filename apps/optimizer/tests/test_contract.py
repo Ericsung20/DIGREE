@@ -36,7 +36,7 @@ def fixture_request() -> dict:
 
 @pytest.fixture(scope="module")
 def contract() -> dict:
-    return yaml.safe_load(CONTRACT_PATH.read_text())
+    return yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------

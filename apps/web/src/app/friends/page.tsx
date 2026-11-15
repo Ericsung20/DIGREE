@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import {useState} from 'react';
+import {useRef, useState} from 'react';
 import {BackLink, EmptyNote, Frame, ICON, SR_ONLY, Svg} from '@/components/dg';
 import {initials} from '@/lib/data/account';
-import {acceptFriend, removeFriend, sendFriendRequest, useFriends} from '@/lib/data/friends';
+import {acceptFriend, findFriendByNetId, removeFriend, sendFriendRequest, useFriends, type FriendSearchResult} from '@/lib/data/friends';
 import {s} from '@/lib/ui/css';
 import {plural} from '@/lib/ui/format';
 import {personTone} from '@/lib/ui/palette';
@@ -36,6 +36,11 @@ function Avatar({id, name, size, sharing = true}: {id: string; name: string; siz
 export default function FriendsPage() {
   const friends = useFriends();
   const [input, setInput] = useState('');
+  const [match, setMatch] = useState<FriendSearchResult | null>(null);
+  const [searched, setSearched] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [sending, setSending] = useState(false);
+  const searchVersion = useRef(0);
   const [note, setNote] = useState<{text: string; error: boolean} | null>(null);
   const [fresh, setFresh] = useState<string | null>(null); // the friend just accepted pops into the list
   const [leaving, setLeaving] = useState<string[]>([]); // request cards fold away before their row changes
@@ -45,13 +50,39 @@ export default function FriendsPage() {
   const accepted = friends.filter((friend) => friend.status === 'accepted');
   const list = [...accepted.filter((friend) => friend.id === fresh), ...accepted.filter((friend) => friend.id !== fresh)];
 
-  async function send() {
+  async function search() {
+    const version = ++searchVersion.current;
+    setSearching(true);
+    setMatch(null);
+    setNote(null);
     try {
-      const failure = await sendFriendRequest(input);
+      const result = await findFriendByNetId(input);
+      if (version !== searchVersion.current) return;
+      setMatch(result.match);
+      setNote(result.error ? {text: result.error, error: true} : null);
+      setSearched(!result.error);
+    } catch {
+      if (version === searchVersion.current) setNote({text: 'Couldn’t search right now. Try again.', error: true});
+    } finally {
+      if (version === searchVersion.current) setSearching(false);
+    }
+  }
+
+  async function send() {
+    if (!match || sending) return;
+    setSending(true);
+    try {
+      const failure = await sendFriendRequest(match.netid);
       setNote(failure ? {text: failure, error: true} : {text: 'Request sent. It’s pending until they accept.', error: false});
-      if (!failure) setInput('');
+      if (!failure) {
+        setInput('');
+        setMatch(null);
+        setSearched(false);
+      }
     } catch {
       setNote({text: 'Couldn’t send the request. Try again.', error: true});
+    } finally {
+      setSending(false);
     }
   }
 
@@ -77,19 +108,32 @@ export default function FriendsPage() {
       <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 14px 20px 24px; display: flex; flex-direction: column; gap: 16px')}>
         <form className="rise" onSubmit={(event) => {
           event.preventDefault();
-          void send();
+          void search();
         }} style={s('display: flex; flex-direction: column; gap: 8px; flex-shrink: 0')}>
           <div style={s('display: flex; align-items: center; gap: 8px')}>
             <label style={s('position: relative; display: block; flex: 1')}>
               <span style={s(SR_ONLY)}>UW NetID</span>
               <Svg size={18} sw={2.6} stroke="#6E6863" style={s('position: absolute; left: 16px; top: 16px')}>{ICON.search}</Svg>
-              <input className="field" type="text" autoComplete="off" enterKeyHint="send" placeholder="UW NetID" value={input} onChange={(event) => {
+              <input className="field" type="text" autoComplete="off" enterKeyHint="search" placeholder="Search by UW NetID" value={input} onChange={(event) => {
+                searchVersion.current++;
                 setInput(event.target.value);
+                setMatch(null);
+                setSearched(false);
+                setSearching(false);
                 setNote(null);
               }} />
             </label>
-            <button type="submit" className="press" aria-label="Send friend request" style={s('width: 50px; height: 50px; flex-shrink: 0; border: none; border-radius: 18px; background: #8C1D2B; color: #FFFFFF; font-size: 30px; line-height: 1; cursor: pointer')}>+</button>
+            <button type="submit" className="press" aria-label="Search NetID" disabled={searching} style={s('width: 50px; height: 50px; flex-shrink: 0; border: none; border-radius: 18px; background: #8C1D2B; color: #FFFFFF; cursor: pointer; display: flex; align-items: center; justify-content: center')}><Svg size={21} sw={2.6} stroke="#FFFFFF">{ICON.search}</Svg></button>
           </div>
+          {searching && <span role="status" style={s('padding: 0 4px; font-size: 13px; font-weight: 700; color: #5F5A55')}>Digging for that NetID…</span>}
+          {searched && !match && <span role="status" style={s('padding: 0 4px; font-size: 13px; font-weight: 700; color: #5F5A55')}>No one to dig up for that NetID. Check the spelling and try again.</span>}
+          {match && <div className="rise" style={s('padding: 12px; border-radius: 20px; background: #FFFFFF; box-shadow: 0 4px 16px rgba(40,20,20,.07); display: flex; align-items: center; gap: 12px')}>
+            <Avatar id={match.id} name={match.netid} size={42} />
+            <span style={s('flex: 1; display: flex; flex-direction: column; min-width: 0')}><strong style={s('font-size: 15px')}>{match.netid}</strong><span style={s('font-size: 12px; font-weight: 700; color: #6E6863')}>@wisc.edu</span></span>
+            {friends.some((friend) => friend.id === match.id || friend.name.toLowerCase() === match.netid)
+              ? <span style={s('font-size: 12px; font-weight: 800; color: #6E6863')}>Already in your list</span>
+              : <button type="button" className="press" disabled={sending} onClick={() => void send()} aria-label={`Send friend request to ${match.netid}`} style={s('height: 36px; padding: 0 14px; border: none; border-radius: 18px; background: #8C1D2B; color: #FFFFFF; font-size: 13px; font-weight: 900; cursor: pointer')}>{sending ? 'Sending…' : '+ Add'}</button>}
+          </div>}
           {note && <span role={note.error ? 'alert' : 'status'} style={s(`padding: 0 4px; font-size: 13px; font-weight: 700; color: ${note.error ? '#8C1D2B' : '#5F5A55'}`)}>{note.text}</span>}
         </form>
 

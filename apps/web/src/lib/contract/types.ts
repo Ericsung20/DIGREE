@@ -73,6 +73,8 @@ export interface components {
             course_code: string;
             credit_options: number[];
             is_required: boolean;
+            /** @description Classified by the caller from the student’s program catalog or explicit major flag; omitted means false */
+            is_major_course?: boolean;
             /**
              * @description Computed upstream; not a university verification
              * @enum {string}
@@ -81,7 +83,7 @@ export interface components {
             already_completed: boolean;
             repeatable: boolean;
             requirement_fit?: number | null;
-            /** @description Catalog breadth codes for this course; null means unknown */
+            /** @description Course designation tags (breadth and Gen Ed) for preference matching; null means unknown */
             breadth?: string[] | null;
             grade_stats?: components["schemas"]["GradeStats"] | null;
             section_bundles: components["schemas"]["SectionBundle"][];
@@ -94,6 +96,8 @@ export interface components {
             blocked_days: components["schemas"]["Day"][];
             walking_buffer_min: number;
             max_walk_per_transition_min?: number | null;
+            /** @description Maximum selected major courses, including required courses; null means no hard limit */
+            max_major_courses?: number | null;
             /**
              * @description Only when seat-status data is reliable
              * @default false
@@ -107,12 +111,14 @@ export interface components {
             grade_outcomes: number;
             degree_fit: number;
             instructor: number;
-            /** @description Preference for optional courses matching preferred_breadths */
+            /** @description Preference for optional courses matching any selected designation */
             breadth?: number;
+            /** @description Soft preference for schedules with 2–4 major courses; zero is neutral */
+            major_balance?: number;
         };
         Preferences: {
             weights: components["schemas"]["Weights"];
-            /** @description Catalog breadth codes to favor, without excluding other courses */
+            /** @description Designation tags to favor as a union: a course matching any selected tag qualifies; other courses remain eligible */
             preferred_breadths?: string[];
             /** @description Use the full candidate pool and a larger search budget when breadth preferences are set */
             catalog_search?: boolean;

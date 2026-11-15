@@ -33,7 +33,6 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 .dg-range::-moz-range-thumb{width:22px;height:22px;border-radius:15px;background:#1D1B1A;border:4px solid #FFFFFF;box-shadow:0 2px 8px rgba(0,0,0,.22)}
 `;
 
-const PREFER: {key: keyof DigConditions['prefer']; label: string}[] = [{key: 'walks', label: 'Short walks'}, {key: 'lunch', label: 'Lunch break'}, {key: 'days', label: 'Fewer days'}];
 const HOUR_BUTTON = 'position: relative; flex: 1; height: 52px; border: none; border-radius: 18px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.08); color: #1D1B1A; font-size: 18px; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center';
 const hours = (from: number, to: number) => Array.from({length: to - from + 1}, (_, i) => (from + i) * 60);
 // Sample mode sends the shared fixture, so its required courses are the must-takes until the user adds their own.
@@ -50,6 +49,7 @@ function GenerateSetup() {
   const planned = records.filter((record) => record.term === term && record.status === 'planned');
   const details = useCourseDetails(planned.map((record) => record.course_id));
   const [bump, setBump] = useState(false);
+  const [designationGroup, setDesignationGroup] = useState<'Breadth' | 'General education'>('Breadth');
   const bumpTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(bumpTimer.current), []);
 
@@ -57,12 +57,12 @@ function GenerateSetup() {
   const mustTake: (MustTake & {record?: string})[] = own.length || !IS_MOCK ? own : SAMPLE;
   const mustCredits = mustTake.reduce((total, course) => total + course.credits, 0);
   const min = Math.min(Math.max(mustCredits, 1), CREDIT_LIMIT);
-  const max = Math.max(CREDIT_LIMIT, mustCredits);
+  const max = CREDIT_LIMIT;
   const credits = Math.min(max, Math.max(min, conditions.credits));
   const fill = Math.max(0, credits - mustCredits);
   const mustPct = Math.round((Math.min(mustCredits, credits) / credits) * 100);
   const update = (change: Partial<DigConditions>) => saveDigConditions({...conditions, ...change});
-  const ready = mustTake.length > 0 && !!term;
+  const ready = mustTake.length > 0 && mustCredits <= CREDIT_LIMIT && !!term;
 
   function dig() {
     startDig({term, termLabel, conditions: {...conditions, credits}, mustTake: mustTake.map(({id, code, credits: courseCredits}) => ({id, code, credits: courseCredits})), mock: params.get('mock')});
@@ -154,31 +154,45 @@ function GenerateSetup() {
           </div>
         </section>
 
-        <section className="rise" style={s('display: flex; flex-direction: column; gap: 10px; animation-delay: 300ms')}>
-          <h2 style={s('margin: 0; font-size: 15px; font-weight: 800')}>Prefer</h2>
-          <div style={s('display: flex; flex-wrap: wrap; gap: 8px')}>
-            {PREFER.map(({key, label}) => {
-              const on = conditions.prefer[key];
-              return (
-                <button key={key} type="button" className="press" aria-pressed={on} onClick={() => update({prefer: {...conditions.prefer, [key]: !on}})} style={s(`height: 44px; padding: 0 18px; border: none; border-radius: 22px; font-size: 14px; font-weight: 800; cursor: pointer; transition: background 220ms ease, color 220ms ease, transform 160ms ease; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: #FFFFFF; color: #5F5A55; box-shadow: 0 1px 3px rgba(40,20,20,0.08)'}`)}>{(on ? '✓  ' : '') + label}</button>
-              );
-            })}
+        <section className="rise" style={s('display: flex; flex-direction: column; gap: 8px; animation-delay: 300ms')}>
+          <label htmlFor="major-cap" style={s('font-size: 15px; font-weight: 800')}>Major courses</label>
+          <div style={s('height: 52px; padding: 0 14px; border-radius: 18px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,.08); display: flex; align-items: center; gap: 8px')}>
+            <span style={s('flex: 1; color: #5F5A55; font-size: 13px; font-weight: 700')}>How many?</span>
+            <select id="major-cap" aria-label="Major course preference" value={conditions.majorPreference} onChange={(event) => update({majorPreference: event.target.value === 'balanced' || event.target.value === 'none' ? event.target.value : Number(event.target.value)})}
+              style={s('max-width: 168px; border: 0; background: transparent; color: #1D1B1A; font-size: 14px; font-weight: 900; text-align: right; outline-offset: 4px; cursor: pointer')}>
+              <option value="balanced">Balanced (2–4)</option>
+              <option value="none">No preference</option>
+              {Array.from({length: 7}, (_, count) => <option key={count} value={count}>At most {count}</option>)}
+            </select>
           </div>
+          <span style={s('padding-left: 2px; color: #8A847E; font-size: 11px; font-weight: 700')}>{conditions.majorPreference === 'balanced' ? 'A gentle preference based on your timetable.' : conditions.majorPreference === 'none' ? 'Major course count will not affect recommendations.' : 'A firm maximum, including must-take courses.'}</span>
         </section>
 
-        <section className="rise" style={s('display: flex; flex-direction: column; gap: 10px; animation-delay: 360ms')}>
-          <h2 style={s('margin: 0; font-size: 15px; font-weight: 800')}>Preferred breadth</h2>
-          <div style={s('display: flex; flex-wrap: wrap; gap: 8px')}>
-            {BREADTH_OPTIONS.map(({code, label}) => {
+        <section className="rise" style={s('padding: 16px; border-radius: 24px; background: #FFFFFF; box-shadow: 0 2px 12px rgba(40,20,20,.05); display: flex; flex-direction: column; gap: 12px; animation-delay: 360ms')}>
+          <div style={s('display: flex; flex-direction: column; gap: 3px')}>
+            <h2 style={s('margin: 0; font-size: 15px; font-weight: 900')}>Course designations</h2>
+            <p style={s('margin: 0; color: #6E6863; font-size: 12px; font-weight: 700')}>DIG favors courses matching <strong>any</strong> selection.</p>
+          </div>
+          <div role="tablist" aria-label="Course designation type" style={s('padding: 3px; border-radius: 15px; background: #F1EEEA; display: grid; grid-template-columns: 1fr 1fr; gap: 3px')}>
+            {(['Breadth', 'General education'] as const).map((group) => <button key={group} type="button" role="tab" aria-selected={designationGroup === group} onClick={() => setDesignationGroup(group)}
+              style={s(`height: 38px; border: 0; border-radius: 12px; cursor: pointer; font-size: 12px; font-weight: 900; ${designationGroup === group ? 'background: #FFFFFF; color: #1D1B1A; box-shadow: 0 1px 3px rgba(40,20,20,.08)' : 'background: transparent; color: #6E6863'}`)}>{group} {conditions.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code && option.group === group)).length || ''}</button>)}
+          </div>
+          <div role="group" aria-label={designationGroup} style={s('display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px')}>
+            {BREADTH_OPTIONS.filter((option) => option.group === designationGroup).map(({code, label}) => {
               const on = conditions.breadths.includes(code);
               return <button key={code} type="button" className="press" aria-pressed={on} onClick={() => update({breadths: on ? conditions.breadths.filter((item) => item !== code) : [...conditions.breadths, code]})}
-                style={s(`min-height: 44px; padding: 0 16px; border: none; border-radius: 22px; font-size: 14px; font-weight: 800; cursor: pointer; transition: background 220ms ease, color 220ms ease, transform 160ms ease; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: #FFFFFF; color: #5F5A55; box-shadow: 0 1px 3px rgba(40,20,20,0.08)'}`)}>{on ? '✓ ' : ''}{label} ({code})</button>;
+                style={s(`min-height: 50px; padding: 8px 10px; border: 1.5px solid ${on ? '#8C1D2B' : '#ECE8E3'}; border-radius: 14px; background: ${on ? '#F9EDEF' : '#FBFAF8'}; color: ${on ? '#7E1C29' : '#3D3936'}; cursor: pointer; display: flex; align-items: center; gap: 8px; text-align: left; font-size: 12px; font-weight: 800; line-height: 1.15`)}>
+                {code.length === 1 && <span aria-hidden="true" style={s(`width: 22px; height: 22px; flex-shrink: 0; border-radius: 7px; background: ${on ? '#8C1D2B' : '#EDE8E2'}; color: ${on ? '#FFFFFF' : '#6E6863'}; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 900`)}>{code}</span>}
+                <span style={s('flex: 1')}>{label}</span>{on && <span aria-hidden="true">✓</span>}
+              </button>;
             })}
           </div>
+          {conditions.breadths.length > 0 && <span style={s('padding-top: 2px; border-top: 1px solid #F1EEEA; color: #6E6863; font-size: 11px; font-weight: 700')}>{conditions.breadths.length} selected across both groups</span>}
         </section>
       </main>
 
       <div style={s('flex-shrink: 0; padding: 8px 20px 14px')}>
+        {mustCredits > CREDIT_LIMIT && <span role="alert" style={s('display: block; margin-bottom: 8px; color: #8C1D2B; font-size: 12px; font-weight: 800')}>Must-take courses exceed the 18-credit maximum. Remove a course to dig.</span>}
         {ready ? (
           <button type="button" onClick={dig} className="digbtn" style={s('width: 100%; border: none; cursor: pointer; height: 58px; border-radius: 22px; background: #8C1D2B; color: #FFFFFF; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 18px; font-weight: 900; box-shadow: 0 8px 20px rgba(140,29,43,0.30)')}>
             <Spade fill="#FFFFFF" style="height: 26px; width: 10px; transform-origin: 50% 90%" />

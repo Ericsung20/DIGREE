@@ -57,3 +57,12 @@ def test_catalog_search_ranks_best_combination_of_late_breadth_candidates():
     assert not response.diagnostics.search_truncated
     assert [item.course_id for item in response.results[0].selected] == ["required", "z-1", "z-2"]
     assert response.results[0].score > response.results[1].score
+
+
+def test_multiple_designations_are_a_union_not_an_intersection():
+    body = payload()
+    body["preferences"]["preferred_breadths"] = ["H", "S"]
+    body["courses"].append(course("neither", [bundle("neither-A", [meeting("THU", 600, 650)])],
+                                  is_required=False, breadth=["N"], requirement_fit=0.8))
+    results = run(body, SearchLimits(max_optional_courses=2)).results
+    assert {result.selected[-1].course_id for result in results} == {"other", "preferred"}

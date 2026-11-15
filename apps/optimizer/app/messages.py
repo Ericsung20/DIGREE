@@ -9,6 +9,7 @@ or guaranteed anything.
 # Each rejected combination is counted once, under the first check it fails.
 REJECTION_REASONS = (
     "credits_out_of_range",
+    "max_major_courses_exceeded",
     "section_full",
     "outside_time_window",
     "blocked_day",

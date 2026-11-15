@@ -2,13 +2,11 @@
 // Recommendations and Schedule Preview screens show. No network, no storage, so it runs in tests.
 import type {components} from './contract/types';
 import {BREADTH_OPTIONS} from './breadth';
-import type {DigPrefer} from './dig-request';
 import {DAYS} from './time';
 import {DAY_SHORT, courseList, dayIndex, dayRange, hourLabel, plural, timeOfDay} from './ui/format';
 
 type S = components['schemas'];
 type Day = S['Day'];
-type Meeting = S['Meeting'];
 
 /** What the Generate Setup screen collects. Days are Monday to Friday; true means classes are allowed. */
 export type DigConditions = {
@@ -16,16 +14,15 @@ export type DigConditions = {
   days: boolean[];
   earliest: number;
   latest: number;
-  prefer: {walks: boolean; lunch: boolean; days: boolean};
   breadths: string[];
+  majorPreference: 'balanced' | 'none' | number;
 };
-// The starting point is the one the design shows: 14 credits, Monday to Thursday, 9 to 4, short walks and a lunch break.
-export const DEFAULT_CONDITIONS: DigConditions = {credits: 14, days: [true, true, true, true, false], earliest: 540, latest: 960, prefer: {walks: true, lunch: true, days: false}, breadths: []};
-export const CREDIT_LIMIT = 21;
+export const DEFAULT_CONDITIONS: DigConditions = {credits: 14, days: [true, true, true, true, false], earliest: 540, latest: 960, breadths: [], majorPreference: 'balanced'};
+export const CREDIT_LIMIT = 18;
 
 /** The request body the browser posts to /api/dig/generate. `mustCredits` is the total of the must-take courses. */
 export function toDigBody(term: string, conditions: DigConditions, required: string[], mustCredits: number) {
-  const max = Math.max(conditions.credits, mustCredits);
+  const max = Math.min(CREDIT_LIMIT, Math.max(conditions.credits, mustCredits));
   return {
     term,
     // One credit under the target still counts as a match; the option card says so.
@@ -35,8 +32,9 @@ export function toDigBody(term: string, conditions: DigConditions, required: str
     earliest: conditions.earliest,
     latest: conditions.latest,
     blocked: DAYS.filter((_, day) => day > 4 || !conditions.days[day]),
-    prefer: (Object.keys(conditions.prefer) as DigPrefer[]).filter((key) => conditions.prefer[key]),
     preferred_breadths: conditions.breadths,
+    max_major_courses: typeof conditions.majorPreference === 'number' ? conditions.majorPreference : null,
+    balance_major_courses: conditions.majorPreference === 'balanced',
     related: true,
   };
 }
@@ -45,8 +43,11 @@ export function toDigBody(term: string, conditions: DigConditions, required: str
 export function conditionsChip(termLabel: string, conditions: DigConditions): string {
   const hour = (min: number) => hourLabel(min).replace(/ [AP]M$/, '');
   const days = conditions.days.flatMap((on, day) => (on ? [day] : []));
-  const breadths = conditions.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code));
-  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}${breadths.length ? ` · ${breadths.join(', ')}` : ''}`;
+  const breadths = conditions.breadths.flatMap((code) => {
+    const option = BREADTH_OPTIONS.find((item) => item.code === code);
+    return option ? [code.length === 1 ? code : option.label] : [];
+  });
+  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}${typeof conditions.majorPreference === 'number' ? ` · ≤${conditions.majorPreference} major` : ''}${breadths.length ? ` · ${breadths.join(', ')}` : ''}`;
 }
 
 /** Walking facts for one result, worked out next to the walking data and sent with the response. */
@@ -113,22 +114,6 @@ export type DigOption = {
 };
 
 const warningCode = (warning: string) => warning.split(': ', 1)[0];
-const LUNCH = {from: 660, to: 840, length: 45}; // a 45-minute gap somewhere between 11 AM and 2 PM
-
-/** Days on which classes leave no lunch gap. */
-function daysWithoutLunch(meetings: Meeting[]): number[] {
-  return DAYS.flatMap((day, index) => {
-    const busy = meetings.filter((meeting) => meeting.day === day).sort((a, b) => a.start_min - b.start_min);
-    if (!busy.length) return [];
-    let free = LUNCH.from;
-    for (const meeting of busy) {
-      if (meeting.start_min - free >= LUNCH.length && free < LUNCH.to) return [];
-      free = Math.max(free, meeting.end_min);
-    }
-    return LUNCH.to - free >= LUNCH.length ? [] : [index];
-  });
-}
-
 export function describeOptions(response: DigResponse, conditions: DigConditions, required: string[], buildingName: (id: string) => string): DigOption[] {
   const used = new Set<string>();
   const target = Math.max(conditions.credits, 0);
@@ -145,14 +130,12 @@ export function describeOptions(response: DigResponse, conditions: DigConditions
     if (tag) used.add(tag);
 
     const under = target - result.metrics.total_credits;
-    const noLunch = conditions.prefer.lunch ? daysWithoutLunch(meetings) : [];
     let check: string | null = null;
     if (walk?.unknown.length) check = `No walking data for ${buildingName(walk.unknown[0])}`;
     else if (walkUnknown) check = codes.includes('location_uncertain') ? 'An online class sits right next to an in-person one' : 'A class has no building listed';
     else if (codes.includes('section_full_included')) check = 'Includes a section reported as full';
     else if (walk?.tight) check = `Tight transfer ${DAY_SHORT[dayIndex(walk.tight.day)]} ${timeOfDay(walk.tight.end_min).replace(/ [AP]M$/, '')} → ${timeOfDay(walk.tight.start_min).replace(/ [AP]M$/, '')}`;
     else if (under > 0) check = `${plural(under, 'credit')} under your target`;
-    else if (noLunch.length) check = `No lunch break on ${noLunch.map((day) => DAY_SHORT[day]).join(', ')}`;
     else if (codes.includes('search_incomplete')) check = 'DIG stopped before checking every combination';
 
     return {
@@ -184,6 +167,7 @@ export function blockers(reasons: string[], conditions: DigConditions, mustTake:
     required_course_already_completed: {title: courses, body: 'You already completed a must-take course that can’t be repeated.'},
     required_course_without_bundles: {title: courses, body: 'A must-take course has no sections with meeting times this term.'},
     no_usable_optional_courses: {title: `${conditions.credits} credits`, body: 'DIG found no other course it could add to reach your target.'},
+    max_major_courses_exceeded: {title: 'Major course limit', body: 'A schedule needs more major courses than your limit allows. Raise the limit or change a must-take course.'},
     credits_out_of_range: {title: `${conditions.credits} credits`, body: 'The combinations that fit land outside your credit target.'},
     section_full: {title: courses, body: 'A section you would need is full.'},
     outside_time_window: {title: 'Hours', body: `Some sections meet before ${hourLabel(conditions.earliest)} or after ${hourLabel(conditions.latest)}.`},
@@ -204,7 +188,6 @@ export function loosenChoices(conditions: DigConditions, mustCredits: number): {
   }
   const off = dayOff(conditions);
   if (off >= 0) choices.push({label: `Allow ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][off]}`, apply: (current) => ({...current, days: current.days.map((on, day) => on || day === off)})});
-  if (conditions.prefer.lunch) choices.push({label: 'Skip lunch break', apply: (current) => ({...current, prefer: {...current.prefer, lunch: false}})});
   if (conditions.earliest > 420) {
     const earlier = Math.max(420, conditions.earliest - 60);
     choices.push({label: `Start at ${hourLabel(earlier)}`, apply: (current) => ({...current, earliest: earlier})});

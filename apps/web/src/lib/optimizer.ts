@@ -49,7 +49,7 @@ export async function callOptimizer(body: GenerateRequest): Promise<GenerateOutc
   if (res.status === 422 && Array.isArray(error?.details) && error.details.length) {
     const details = error.details.filter((detail: unknown): detail is string => typeof detail === 'string');
     console.warn('Optimizer rejected the DIG request', {requestId: body.request_id, details});
-    if (details.some((detail: string) => /^(?:courses\[\d+\]\.breadth|preferences\.(?:preferred_breadths|catalog_search|weights\.breadth)): Extra inputs are not permitted/.test(detail))) {
+    if (details.some((detail: string) => /^(?:courses\[\d+\]\.(?:breadth|is_major_course)|constraints\.max_major_courses|preferences\.(?:preferred_breadths|catalog_search|weights\.(?:breadth|major_balance))): Extra inputs are not permitted/.test(detail))) {
       return {kind: 'unavailable', message: 'The DIG server is running an older version.'};
     }
   }

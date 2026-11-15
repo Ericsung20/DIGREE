@@ -40,6 +40,14 @@ test('live sample request carries selected breadth and the DIG constraints', () 
   expect(built.constraints).toMatchObject({min_credits: 13, max_credits: 14, blocked_days: ['FRI', 'SAT', 'SUN']});
   expect(built.preferences).toMatchObject({preferred_breadths: ['H'], weights: {breadth: 1}});
   expect(built.courses.find((course) => course.course_id === 'demo-breadth-h')?.breadth).toEqual(['H']);
+  const comm = buildSampleGenerateRequest({...inputs, preferred_breadths: ['COMM_B', 'ETHNIC']});
+  if ('error' in comm) throw new Error(comm.error);
+  expect(comm.courses.find((course) => course.course_id === 'demo-breadth-comm_b')?.breadth).toContain('COMM_B');
+  expect(comm.courses.find((course) => course.course_id === 'demo-breadth-ethnic')?.breadth).toContain('ETHNIC');
+  const capped = buildSampleGenerateRequest({...inputs, max_major_courses: 1, balance_major_courses: false});
+  if ('error' in capped) throw new Error(capped.error);
+  expect(capped.constraints.max_major_courses).toBe(1);
+  expect(capped.courses.filter((course) => course.is_major_course).map((course) => course.course_id)).toEqual(['cs400', 'demo-a-major']);
 });
 
 // Opt-in: set OPTIMIZER_LIVE_URL=http://127.0.0.1:8000 to compare the running optimizer with the locked fixture.

@@ -45,10 +45,17 @@ export function Spade({fill, outline = true, style, className, label}: {fill: st
   );
 }
 
-export function Wordmark({style, className}: {style: string; className?: string}) {
+export function Wordmark({style, className, animatedMark = false}: {style: string; className?: string; animatedMark?: boolean}) {
+  const mark = animatedMark
+    ? <span className="wordmark-spade" aria-hidden="true">
+        <Spade fill="#8C1D2B" style="width: 100%; height: 100%; display: block" />
+        <span className="wordmark-grain wordmark-grain-left" />
+        <span className="wordmark-grain wordmark-grain-right" />
+      </span>
+    : <Spade fill="#8C1D2B" style="height: 1.05em; width: 0.404em; vertical-align: -0.28em; margin: 0 0.03em" />;
   return (
     <span className={className} aria-label="DIGREE" style={s(style)}>
-      d<Spade fill="#8C1D2B" style="height: 1.05em; width: 0.404em; vertical-align: -0.28em; margin: 0 0.03em" />gree
+      d{mark}gree
     </span>
   );
 }

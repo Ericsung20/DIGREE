@@ -9,17 +9,25 @@ const required = request.courses.map((course) => course.course_id);
 
 test('toDigBody aims one credit under the target at most, blocks days off and the weekend, and passes validation', () => {
   const body = toDigBody('2027SP', DEFAULT_CONDITIONS, ['cs400'], 3);
-  expect(body).toMatchObject({min_credits: 13, max_credits: 14, earliest: 540, latest: 960, blocked: ['FRI', 'SAT', 'SUN'], prefer: ['walks', 'lunch'], related: true});
+  expect(body).toMatchObject({min_credits: 13, max_credits: 14, earliest: 540, latest: 960, blocked: ['FRI', 'SAT', 'SUN'], related: true});
+  expect(body).not.toHaveProperty('prefer');
+  expect(body.max_major_courses).toBeNull();
   expect('error' in parseDigInputs(body)).toBe(false);
   // Must-takes that already exceed the target raise it instead of producing an impossible range.
   expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, credits: 8}, ['a', 'b', 'c'], 11)).toMatchObject({min_credits: 11, max_credits: 11});
+  expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, credits: 21}, ['cs400'], 3).max_credits).toBe(18);
   expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, breadths: ['H', 'S']}, ['cs400'], 3).preferred_breadths).toEqual(['H', 'S']);
+  expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, majorPreference: 2}, ['cs400'], 3).max_major_courses).toBe(2);
+  expect(body.balance_major_courses).toBe(true);
+  expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, majorPreference: 'none'}, ['cs400'], 3).balance_major_courses).toBe(false);
 });
 
 test('conditionsChip reads like the design: term, credits, days, hours', () => {
   expect(conditionsChip('Spring 2027', DEFAULT_CONDITIONS)).toBe('Spring 2027 · 14 cr · M–Th · 9–4');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, days: [true, false, true, false, true], earliest: 630})).toBe('Fall 2026 · 14 cr · M, W, F · 10:30–4');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, breadths: ['H']})).toContain(' · H');
+  expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, breadths: ['COMM_B', 'ETHNIC']})).toContain(' · Comm B, Ethnic Studies');
+  expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, majorPreference: 2})).toContain(' · ≤2 major');
 });
 
 test('walkChecks finds the longest single walk and matches the optimizer’s weekly totals', () => {
@@ -37,7 +45,7 @@ test('walkChecks reports unknown walks instead of guessing', () => {
 
 test('describeOptions labels the cards and picks one thing to check', () => {
   const withWalks = {...response, walks: walkChecks(response.results, request.walking_edges)};
-  const onTarget = {...DEFAULT_CONDITIONS, credits: 10, prefer: {walks: true, lunch: false, days: false}};
+  const onTarget = {...DEFAULT_CONDITIONS, credits: 10};
   const options = describeOptions(withWalks, onTarget, required, (id) => `${id} Hall`);
   expect(options.map((option) => [option.tag, option.walk, option.check])).toEqual([
     ['Best match', '0 min', null],
@@ -58,8 +66,8 @@ test('an empty result explains itself and offers ways to loosen the conditions',
     'Some sections meet on Fri.',
   ]);
   const choices = loosenChoices(DEFAULT_CONDITIONS, 7);
-  expect(choices.map((choice) => choice.label)).toEqual(['End by 5:30 PM', 'Allow Friday', 'Skip lunch break']);
+  expect(choices.map((choice) => choice.label)).toEqual(['End by 5:30 PM', 'Allow Friday', 'Start at 8 AM']);
   expect(choices[0].apply(DEFAULT_CONDITIONS).latest).toBe(1050);
   expect(choices[1].apply(DEFAULT_CONDITIONS).days).toEqual([true, true, true, true, true]);
-  expect(choices[2].apply(DEFAULT_CONDITIONS).prefer.lunch).toBe(false);
+  expect(choices[2].apply(DEFAULT_CONDITIONS).earliest).toBe(480);
 });

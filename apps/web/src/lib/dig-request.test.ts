@@ -1,6 +1,7 @@
 import {expect, test} from 'vitest';
 import {parseDigInputs, toGenerateRequest, type CatalogRows, type DigInputs} from './dig-request';
 import {assertNoUserData} from './optimizer';
+import {expandBreadthCodes, generalEducationTags, matchingRawBreadthCodes} from './breadth';
 
 const body = {term: '1274', min_credits: '6', max_credits: 7, required: ['a', 'a'], earliest: '480', latest: 1140, blocked: ['FRI']};
 
@@ -22,6 +23,11 @@ test('parseDigInputs rejects out-of-contract values', () => {
   expect(bad({prefer: 'walks'})).toBe(true);
   expect(bad({preferred_breadths: ['']})).toBe(true);
   expect(bad({preferred_breadths: 'H'})).toBe(true);
+  expect(bad({max_major_courses: -1})).toBe(true);
+  expect(bad({max_major_courses: 7})).toBe(true);
+  expect(bad({balance_major_courses: 'true'})).toBe(true);
+  expect(bad({max_major_courses: 2, balance_major_courses: true})).toBe(true);
+  expect(bad({max_major_courses: 1.5})).toBe(true);
 });
 
 const inputs: DigInputs = {term: '1274', minCredits: 6, maxCredits: 7, required: ['a'], earliest: 480, latest: 1140, blockedDays: []};
@@ -68,6 +74,18 @@ test('breadth preference reaches the optimizer with catalog codes', () => {
   const req = toGenerateRequest(parsed, withBreadth, 'breadth-test');
   expect(req.preferences).toMatchObject({preferred_breadths: ['H'], weights: {breadth: 1}});
   expect(req.courses[1].breadth).toEqual(['H']);
+});
+
+test('major-course cap and classification reach the optimizer', () => {
+  const request = toGenerateRequest({...inputs, maxMajorCourses: 1}, {...rows, courses: rows.courses.map((course) => ({...course, is_major_course: course.id === 'a'}))}, 'major-cap');
+  expect(request.constraints.max_major_courses).toBe(1);
+  expect(request.courses.map((course) => course.is_major_course)).toEqual([true, false]);
+});
+
+test('combined breadth and Gen Ed designations map to matching optimizer tags', () => {
+  expect(expandBreadthCodes(['L', 'W'])).toEqual(['L', 'H', 'W', 'S', 'N']);
+  expect(matchingRawBreadthCodes(['S'])).toEqual(expect.arrayContaining(['S', 'W', 'Y', 'Z']));
+  expect(generalEducationTags({course_id: 'a', general_ed_code: 'BR', ethnic_studies_code: 'E'})).toEqual(['COMM_B', 'QR_B', 'ETHNIC']);
 });
 
 // Opt-in: set OPTIMIZER_LIVE_URL=http://127.0.0.1:8000 to check a built request against the running optimizer.

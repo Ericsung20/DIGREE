@@ -46,6 +46,8 @@ npx --yes prettier@3.6.2 --write supabase/types/database.ts
 
 To find the programs that list a course as an option, query `program_requirement_course_options` by canonical UW course code and the student's catalog year. Use `course_requisites.course_aliases` to include alternate cross-listed codes. Read the matching program requirement group before applying a credit or course-choice rule. Determine the GenEd framework from the student's first postsecondary enrollment term and the degree rules from their program and catalog year.
 
+DIG's major-course cap classifies candidates using the student's explicit `counts_toward_major` flags and the selected program's `program_requirement_course_options` codes (including known cross-list aliases). This is a planning classification, not a verified degree audit.
+
 ## Enums
 
 - `course_record_status` is `planned`, `enrolled_self_reported`, `completed` or `withdrawn`. A plan does not register a student. Self-reported enrollment is unverified.
@@ -59,9 +61,10 @@ To find the programs that list a course as an option, query `program_requirement
 ## Views and RPCs
 
 - `community_posts` and `community_comments` are writable views that apply the caller's RLS. Send only `course_id`, `category`, `body` for a post and `post_id`, `body` for a comment. The DB assigns author and alias. An alias identifies one post or comment.
-- `send_friend_request(p_netid)` resolves a confirmed `@wisc.edu` account and creates a pending request. `friend_netids()` labels only the caller’s existing requests and friends. The recipient must accept before either side gains schedule access.
-- `friend_enrolled_schedule(p_owner, p_term)` returns only course codes and meetings for an accepted friend's self-reported enrollment. Grades and other course-record fields remain private.
-- `schedule_visibility(owner, viewer)` returns `full` for accepted friends and `private` otherwise; pass the signed-in caller’s UUID as `viewer`. `can_view_schedule(owner, viewer)` checks access to the complete schedule. Removing a friendship immediately removes access. The legacy `schedule_free_busy` RPC remains but no longer grants a separate access level.
+- `find_friend_by_netid(p_netid)` searches a confirmed `@wisc.edu` account by exact NetID without creating a request. `send_friend_request(p_netid)` then creates the pending request when the user selects Add on the result. `friend_netids()` labels only the caller’s existing requests and friends. The recipient must accept before either side gains schedule access.
+- `friend_enrolled_schedule(p_owner, p_term)` returns course codes and meetings for a friend's self-reported enrollment when full sharing is enabled. Grades and other course-record fields remain private.
+- DIG pages through the selected term's `course_designations` to include matching breadth, Comm A/B, QR A/B, and Ethnic Studies courses without an alphabetical shortlist.
+- `schedule_visibility(owner, viewer)` uses the owner's sharing permission for an accepted friend. `can_view_schedule(owner, viewer)` checks full access. Removing a friendship ends access immediately.
 - `community_vote_totals(p_ids)` and `set_community_vote(p_post, p_value)` return a score floored at zero while retaining each user's up or down vote.
 - `my_chat_rooms()` returns `room_id`, `term`, `course_id`, `course_code`, `title`, `participant_count` and `my_alias` in course-code order. The count includes joined members with a current qualifying record. `my_alias` is null until the user joins, even if the generated RPC type infers it as a string. The room title falls back to the course code.
 - `is_room_member(room_id)` checks current-term `enrolled_self_reported` eligibility. `join_chat_room(room_id)` checks eligibility and returns the user's stable alias for that room. To send, insert `room_id`, `alias` and `body` into `chat_messages`. Subscribe to new rows with a `room_id` filter and a user session. Withdrawal or a change of term removes room, message and send access through RLS.
