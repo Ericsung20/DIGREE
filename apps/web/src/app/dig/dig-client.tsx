@@ -13,7 +13,7 @@ import type {GenerateResponse, ScheduleResult} from '@/lib/optimizer';
 import {DAYS, minToLabel} from '@/lib/time';
 import type {ReactNode} from 'react';
 
-type State = 'idle' | 'loading' | 'success' | 'empty' | 'error' | 'saved';
+type State = 'idle' | 'loading' | 'success' | 'empty' | 'error';
 type ErrorKind = 'validation' | 'unavailable' | 'network';
 
 const ERROR_COPY: Record<ErrorKind, [string, string]> = {
@@ -81,15 +81,16 @@ export function DigClient({defaults, canSave, mock}: {defaults: DigDefaults; can
   const [open, setOpen] = useState<number | null>(null);
   const [required, setRequired] = useState<string[]>([]);
 
-  // A ref, not state: two clicks in the same tick both see stale state, but share the ref.
-  const busy = useRef(false);
+  const generation = useRef<AbortController | null>(null);
+  const lastInputs = useRef<object | null>(null);
   const [detail, setDetail] = useState<string | null>(null);
+  const savePending = useRef(false);
   const [saving, setSaving] = useState(false);
+  const [savedRank, setSavedRank] = useState<number | null>(null);
   const [saveError, setSaveError] = useState(false);
 
-  async function generate(form: FormData) {
-    if (busy.current) return;
-    busy.current = true;
+  function generate(form: FormData) {
+    if (generation.current) return;
     const inputs = {
       term: defaults.term,
       min_credits: form.get('min_credits'),
@@ -101,58 +102,74 @@ export function DigClient({defaults, canSave, mock}: {defaults: DigDefaults; can
       preference: form.get('preference') ?? 'balanced',
       related: form.has('related'),
     };
+    lastInputs.current = inputs;
     setRequired(inputs.required.map(String));
-    setState('loading');
-    try {
-      return await request(inputs);
-    } finally {
-      busy.current = false;
-    }
+    void request(inputs);
   }
 
   async function request(inputs: object) {
+    if (generation.current) return;
+    const controller = new AbortController();
+    generation.current = controller;
+    setState('loading');
     setDetail(null);
     try {
       const res = await fetch(`/api/dig/generate${mock ? `?mock=${encodeURIComponent(mock)}` : ''}`, {
         method: 'POST',
         headers: {'content-type': 'application/json'},
         body: JSON.stringify(inputs),
+        signal: controller.signal,
       });
       if (res.ok) {
         const body = (await res.json()) as GenerateResponse;
+        controller.signal.throwIfAborted();
         setData(body);
         setOpen(null);
+        setSavedRank(null);
         setState(body.results.length > 0 ? 'success' : 'empty');
         return;
       }
+      const failure = res.status === 422
+        ? (await res.json().catch(() => null)) as {error?: {message?: string}} | null
+        : null;
+      controller.signal.throwIfAborted();
+      setDetail(failure?.error?.message ?? null);
       setError(res.status === 422 ? 'validation' : res.status === 503 ? 'unavailable' : 'network');
-      // A 422 says what to fix (ours or the optimizer's), so show it.
-      if (res.status === 422) setDetail(((await res.json().catch(() => null)) as {error?: {message?: string}} | null)?.error?.message ?? null);
     } catch {
+      if (controller.signal.aborted) return;
       setError('network');
+    } finally {
+      if (generation.current === controller) generation.current = null;
     }
     setState('error');
   }
 
+  function cancel() {
+    generation.current?.abort();
+    generation.current = null;
+    step(() => setState('idle'));
+  }
+
   async function save(result: ScheduleResult) {
-    if (!data || busy.current) return;
-    busy.current = true;
+    if (!data || savePending.current) return;
+    savePending.current = true;
     setSaving(true);
     setSaveError(false);
     try {
       await savePlannedSchedule({term: data.term, selected: result.selected}, data.request_id);
-      setState('saved');
-      router.push(`/?term=${encodeURIComponent(data.term)}&view=plans`);
+      setSavedRank(result.rank);
     } catch {
       setSaveError(true);
     } finally {
-      busy.current = false;
+      savePending.current = false;
       setSaving(false);
     }
   }
 
   const showForm = state === 'idle';
   const preview = state === 'success' && open !== null ? data?.results.find((result) => result.rank === open) : undefined;
+  const saved = preview !== undefined && preview.rank === savedRank;
+  const planUrl = `/?term=${encodeURIComponent(data?.term ?? defaults.term)}&view=plans`;
   const sections = useBundlesFor((preview?.selected ?? []).map((selection) => ({...selection, term: defaults.term})));
   const addCourses = `/schedule/courses?term=${encodeURIComponent(defaults.term)}&view=plans&from=dig`;
   function step(change: () => void) {
@@ -160,9 +177,10 @@ export function DigClient({defaults, canSave, mock}: {defaults: DigDefaults; can
     window.scrollTo(0, 0);
   }
   return (
-    <Screen title={preview ? 'Schedule preview' : showForm ? 'Let’s dig in.' : state === 'saved' ? 'Plan saved' : 'Recommendations'}
-      back={showForm ? undefined : preview ? {label: 'Back to recommendations', onClick: () => step(() => setOpen(null))} :
-        state === 'loading' || state === 'saved' ? undefined : {label: 'Back to conditions', onClick: () => step(() => setState('idle'))}}>
+    <Screen title={preview ? 'Schedule preview' : showForm ? 'Let’s dig in.' : 'Recommendations'}
+      back={showForm || state === 'loading' ? undefined : preview ? {label: 'Back to recommendations', onClick: () => {
+        if (!savePending.current) step(() => {setSaveError(false); setOpen(null);});
+      }} : {label: 'Back to conditions', onClick: () => step(() => setState('idle'))}}>
       {showForm && (
         <div className="mb-4">
           <select aria-label="Term" value={defaults.term} disabled={switchingTerm || defaults.terms.length === 1} onChange={(event) => {
@@ -192,7 +210,13 @@ export function DigClient({defaults, canSave, mock}: {defaults: DigDefaults; can
       {preview && <>
         <ResultSummary result={preview} required={required} />
         <div className="surface mt-3">
-          <WeeklyTimetable items={preview.selected.map((selection) => ({label: selection.course_code, meetings: selection.meetings}))} />
+          <WeeklyTimetable items={preview.selected.map((selection) => ({
+            label: selection.course_code,
+            meetings: selection.meetings,
+            autoAdded: !required.includes(selection.course_id),
+          }))} />
+          {preview.selected.some((selection) => !required.includes(selection.course_id) && selection.meetings.length > 0) &&
+            <p className="text-xs text-neutral-600">Dashed blocks were added by DIG.</p>}
           <ul className="mt-2 divide-y divide-neutral-200">
             {preview.selected.map((selection) => <li className="flex justify-between gap-2 py-2 text-sm" key={selection.course_id}><strong>{selection.course_code}</strong><span>{sections[bundleKey({...selection, term: defaults.term})]?.label ?? selection.bundle_id} · {selection.credits} cr</span></li>)}
           </ul>
@@ -201,7 +225,10 @@ export function DigClient({defaults, canSave, mock}: {defaults: DigDefaults; can
           {preview.warnings.map((warning) => <li key={warning}>{warning.replace(/^[a-z_]+: /, '')}</li>)}
         </ul>}
         {!defaults.sample && <WalkingCredit />}
-        {canSave && <button className={`${primary} mt-4`} type="button" disabled={saving} onClick={() => void save(preview)}>{saving ? 'Saving…' : 'Save Plan'}</button>}
+        {canSave && (saved ? <div className="surface mt-4 space-y-2 text-center">
+          <p role="status" className="font-extrabold text-accent">Planted in Plans</p>
+          <Link href={planUrl} className={secondary}>View in Schedule <Chevron /></Link>
+        </div> : <button className={`${primary} mt-4`} type="button" disabled={saving} onClick={() => void save(preview)}>{saving ? 'Saving…' : 'Save Plan'}</button>)}
         {saveError && <p role="alert" className="mt-3 text-sm text-accent">Couldn’t save the schedule. Try again.</p>}
       </>}
       {state === 'empty' && data && (
@@ -223,16 +250,11 @@ export function DigClient({defaults, canSave, mock}: {defaults: DigDefaults; can
       )}
       {state === 'error' && (
         <Message title={ERROR_COPY[error][0]} body={detail ?? ERROR_COPY[error][1]}>
-          <button type="button" onClick={() => setState('idle')} className={secondary}>
-            {error === 'validation' ? 'Edit inputs' : 'Try again'}
-          </button>
-        </Message>
-      )}
-      {state === 'saved' && (
-        <Message title="Saved as planned" body="This is a plan, not a registration.">
-          <Link href={`/?term=${encodeURIComponent(data?.term ?? defaults.term)}&view=plans`} className={secondary}>
-            View in Schedule
-          </Link>
+          {error === 'validation' ? <button type="button" onClick={() => setState('idle')} className={secondary}>Edit inputs</button> :
+            <div className="flex flex-wrap justify-center gap-2">
+              <button type="button" onClick={() => {if (lastInputs.current) void request(lastInputs.current);}} className={secondary}>Try again</button>
+              <Link href="/" className={secondary}>Back to Schedule</Link>
+            </div>}
         </Message>
       )}
       {showForm && defaults.hasSections === false && <Message title="Sections unavailable" body={`Choose a semester with imported section times to build a schedule. ${defaults.termLabel} can still be used in your course history.`} />}
@@ -250,6 +272,7 @@ export function DigClient({defaults, canSave, mock}: {defaults: DigDefaults; can
             <DigMark className="h-5 w-2 animate-pulse motion-reduce:animate-none" />
           </span>
           <p className="section-title">Digging for schedules…</p>
+          <button type="button" className={`${secondary} ml-auto shrink-0`} onClick={cancel}>Cancel</button>
         </div>
       )}
       {defaults.hasSections !== false && defaults.courses.length > 0 && <form

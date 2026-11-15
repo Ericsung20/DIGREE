@@ -27,4 +27,5 @@ For a full-stack run, start the [local Supabase stack](supabase/README.md) and [
 
 - [OpenAPI contract](contracts/openapi.yaml) and [reference fixtures](fixtures/) define the web-to-optimizer API. Both owners review contract changes.
 - [Database handoff](supabase/DB_HANDOFF.md) describes the Supabase interface and access policies.
+- [Scenario testing](docs/scenario-testing.md) maps the DIGREE design boards to app flows and data checks.
 - [Team handoff](docs/handoffs/START_HERE.md) describes the original MVP scope and ownership.
