@@ -24,6 +24,16 @@ Thumbs.db
 
 # Sensitive student documents
 *DARS*.pdf
+dars*.pdf
 
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
 
+# AI tooling (never commit)
+.claude/
+CLAUDE.md
+.claude-mem/
+
+# Local source materials
 /md file/
