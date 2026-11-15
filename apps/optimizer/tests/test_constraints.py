@@ -2,7 +2,6 @@
 
 import pytest
 
-from app.engine import UnsupportedFeatureError
 from tests.builders import bundle, bundle_ids, course, edge, load_fixture_request, meeting, request, run
 
 # --------------------------------------------------------------------------
@@ -219,14 +218,27 @@ def test_too_little_time_is_reported_before_too_long_a_walk():
 
 def test_one_way_edge_is_not_used_in_reverse():
     courses = _two_classes(gap=30)
-    assert len(run(request(courses, [edge("ALPHA", "BETA", 6, bidirectional=False)])).results) == 1
-    with pytest.raises(UnsupportedFeatureError, match="no walking time from ALPHA to BETA"):
-        run(request(courses, [edge("BETA", "ALPHA", 6, bidirectional=False)]))
+
+    forward = run(request(courses, [edge("ALPHA", "BETA", 6, bidirectional=False)])).results[0]
+    assert forward.status == "ready"
+    assert forward.metrics.walking_minutes_weekly == 6
+
+    reverse = run(request(courses, [edge("BETA", "ALPHA", 6, bidirectional=False)])).results[0]
+    assert reverse.status == "needs_review"
+    assert reverse.metrics.walking_minutes_weekly == 0
+    assert [w.split(": ")[0] for w in reverse.warnings] == ["walking_time_unknown"]
+    assert "from ALPHA to BETA" in reverse.warnings[0]
 
 
 def test_missing_edge_is_never_treated_as_zero_minutes():
-    with pytest.raises(UnsupportedFeatureError, match="no walking time from ALPHA to BETA"):
-        run(request(_two_classes(gap=30)))
+    """T11: a zero-minute walk would be a ready schedule scoring 100."""
+    result = run(request(_two_classes(gap=30))).results[0]
+    assert result.status == "needs_review"
+    assert result.score == 50.0
+    assert result.warnings == [
+        "walking_time_unknown: No walking time from ALPHA to BETA; "
+        "that transition was not checked and is not in the walking total."
+    ]
 
 
 def test_missing_edge_does_not_matter_when_a_known_transition_already_fails():
@@ -379,3 +391,136 @@ def test_rejection_reasons_are_reported_in_check_order():
     ]
     assert diagnostics.no_results_reasons == ["outside_time_window", "blocked_day", "time_overlap"]
     assert diagnostics.search_truncated is False
+
+
+# --------------------------------------------------------------------------
+# H8: required courses that cannot be taken
+# --------------------------------------------------------------------------
+
+
+def _one_class(course_id: str = "x", day: str = "MON", **overrides) -> dict:
+    return course(course_id, [bundle(f"{course_id}-A", [meeting(day, 600, 650)])], **overrides)
+
+
+def test_h8_ineligible_required_course_returns_no_results_without_searching():
+    response = run(request([_one_class("x"), _one_class("y", "TUE", eligibility_status="ineligible")]))
+    assert response.results == []
+    assert response.diagnostics.explored_combinations == 0
+    assert response.diagnostics.rejected_by_reason == {}
+    assert response.diagnostics.no_results_reasons == ["required_course_ineligible"]
+
+
+def test_h8_completed_required_course_that_is_not_repeatable_returns_no_results():
+    response = run(request([_one_class("x", already_completed=True, repeatable=False)]))
+    assert response.results == []
+    assert response.diagnostics.explored_combinations == 0
+    assert response.diagnostics.no_results_reasons == ["required_course_already_completed"]
+
+
+def test_h8_completed_required_course_that_is_repeatable_is_scheduled():
+    response = run(request([_one_class("x", already_completed=True, repeatable=True)]))
+    assert [r.status for r in response.results] == ["ready"]
+    assert response.results[0].warnings == []
+
+
+def test_h8_blocking_reasons_are_listed_once_each_in_a_fixed_order():
+    payload = request(
+        [
+            course("empty", []),
+            _one_class("done", already_completed=True),
+            _one_class("blocked", "TUE", eligibility_status="ineligible"),
+            _one_class("also-blocked", "WED", eligibility_status="ineligible"),
+        ]
+    )
+    assert run(payload).diagnostics.no_results_reasons == [
+        "required_course_ineligible",
+        "required_course_already_completed",
+        "required_course_without_bundles",
+    ]
+
+
+def test_h8_ineligible_optional_course_does_not_block_required_schedules():
+    payload = request(
+        [_one_class("x"), _one_class("opt", "TUE", is_required=False, eligibility_status="ineligible")]
+    )
+    response = run(payload)
+    assert [bundle_ids(r) for r in response.results] == [["x-A"]]
+    assert response.results[0].status == "ready"
+
+
+# --------------------------------------------------------------------------
+# H10: full sections
+# --------------------------------------------------------------------------
+
+
+def _open_and_full() -> list[dict]:
+    return [
+        course(
+            "x",
+            [
+                bundle("x-full", [meeting("MON", 600, 650)], seat_status="full"),
+                bundle("x-open", [meeting("TUE", 600, 650)]),
+            ],
+        )
+    ]
+
+
+def test_h10_full_bundle_is_rejected_when_exclusion_is_on():
+    response = run(request(_open_and_full(), exclude_full_sections=True))
+    assert [bundle_ids(r) for r in response.results] == [["x-open"]]
+    assert response.results[0].status == "ready"
+    assert response.diagnostics.explored_combinations == 2
+    assert response.diagnostics.rejected_by_reason == {"section_full": 1}
+
+
+def test_h10_every_bundle_full_returns_no_results_with_the_reason():
+    payload = request(
+        [course("x", [bundle("x-A", [meeting("MON", 600, 650)], seat_status="full")])],
+        exclude_full_sections=True,
+    )
+    response = run(payload)
+    assert response.results == []
+    assert response.diagnostics.rejected_by_reason == {"section_full": 1}
+    assert response.diagnostics.no_results_reasons == ["section_full"]
+
+
+def test_h10_unknown_seat_status_is_not_treated_as_full():
+    payload = request(
+        [course("x", [bundle("x-A", [meeting("MON", 600, 650)], seat_status="unknown")])],
+        exclude_full_sections=True,
+    )
+    response = run(payload)
+    assert [r.status for r in response.results] == ["needs_review"]
+    assert response.diagnostics.rejected_by_reason == {}
+
+
+def test_full_bundle_is_kept_when_exclusion_is_off():
+    response = run(request(_open_and_full()))
+    assert sorted(bundle_ids(r)[0] for r in response.results) == ["x-full", "x-open"]
+    assert response.diagnostics.rejected_by_reason == {}
+
+
+def test_section_full_is_checked_before_the_time_checks():
+    payload = request(
+        [
+            course(
+                "x",
+                [
+                    bundle("x-full-early", [meeting("MON", 300, 350)], seat_status="full"),
+                    bundle("x-early", [meeting("MON", 300, 350)]),
+                    bundle("x-overlap", [meeting("TUE", 600, 650)]),
+                ],
+            ),
+            _one_class("y", "TUE"),
+        ],
+        earliest_start_min=480,
+        exclude_full_sections=True,
+    )
+    diagnostics = run(payload).diagnostics
+    assert diagnostics.explored_combinations == 3
+    assert list(diagnostics.rejected_by_reason.items()) == [
+        ("section_full", 1),
+        ("outside_time_window", 1),
+        ("time_overlap", 1),
+    ]
+    assert diagnostics.no_results_reasons == ["section_full", "outside_time_window", "time_overlap"]

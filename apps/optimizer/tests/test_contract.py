@@ -327,7 +327,7 @@ def test_identical_duplicate_walking_edges_are_accepted(client, fixture_request)
 
 
 # --------------------------------------------------------------------------
-# 503 not_implemented: behaviour deferred to later milestones
+# 503 not_implemented: behaviour deferred to Milestone C
 # --------------------------------------------------------------------------
 
 
@@ -368,45 +368,6 @@ UNSUPPORTED_REQUESTS = {
         ),
         "courses: no course is required",
     ),
-    "required course with unknown eligibility": (
-        lambda r: r["courses"][1].update(eligibility_status="unknown"),
-        "courses[1].eligibility_status: ",
-    ),
-    "required course that is ineligible": (
-        lambda r: r["courses"][1].update(eligibility_status="ineligible"),
-        "courses[1].eligibility_status: ",
-    ),
-    "required course completed and not repeatable": (
-        lambda r: r["courses"][0].update(already_completed=True),
-        "courses[0].already_completed: ",
-    ),
-    "unknown seat status": (
-        lambda r: _first_bundle(r).update(seat_status="unknown"),
-        "courses[0].section_bundles[0].seat_status: ",
-    ),
-    "full section with exclusion enabled": (
-        lambda r: (
-            _first_bundle(r).update(seat_status="full"),
-            r["constraints"].update(exclude_full_sections=True),
-        ),
-        "courses[0].section_bundles[0].seat_status: ",
-    ),
-    "online_sync meeting": (
-        lambda r: _first_meeting(r).update(mode="online_sync", building_id=None),
-        "courses[0].section_bundles[0].meetings[0].mode: ",
-    ),
-    "hybrid meeting": (
-        lambda r: _first_meeting(r).update(mode="hybrid"),
-        "courses[0].section_bundles[0].meetings[0].mode: ",
-    ),
-    "in-person meeting without a building": (
-        lambda r: _first_meeting(r).update(building_id=None),
-        "courses[0].section_bundles[0].meetings[0].building_id: ",
-    ),
-    "missing walking edge on a surviving schedule": (
-        lambda r: r["walking_edges"].pop(0),
-        "walking_edges: no walking time from ALPHA to BETA",
-    ),
 }
 
 
@@ -432,7 +393,6 @@ SUPPORTED_VARIATIONS = {
     "completed but repeatable required course": lambda r: r["courses"][0].update(
         already_completed=True, repeatable=True
     ),
-    "full section while exclusion is off": lambda r: _first_bundle(r).update(seat_status="full"),
     "exclusion on with no full sections": lambda r: r["constraints"].update(
         exclude_full_sections=True
     ),
@@ -451,6 +411,147 @@ def test_variation_that_needs_no_new_behaviour_still_matches_fixture(client, fix
     response = client.post(GENERATE, json=fixture_request)
     assert response.status_code == 200
     assert response.json() == load_fixture_expected()
+
+
+# --------------------------------------------------------------------------
+# Unknown data and the remaining hard constraints (Milestone B)
+#
+# These scenarios returned a temporary 503 in Milestone A. Each is the fixture
+# request with one change, so results are named by their CS 400 and MATH 234
+# bundles; STAT 240 is always stat240-A.
+# --------------------------------------------------------------------------
+
+BB = ["cs400-B", "math234-B"]  # fixture rank 1, never touched by these changes
+AA = ["cs400-A", "math234-A"]  # fixture rank 2
+AB = ["cs400-A", "math234-B"]  # fixture rank 3
+
+FIXTURE_DIAGNOSTICS = {
+    "explored_combinations": 4,
+    "rejected_by_reason": {"time_overlap": 1},
+    "search_truncated": False,
+    "no_results_reasons": [],
+}
+
+
+def _nothing_explored(reason: str) -> dict:
+    return {
+        "explored_combinations": 0,
+        "rejected_by_reason": {},
+        "search_truncated": False,
+        "no_results_reasons": [reason],
+    }
+
+
+# name -> (change to the fixture, expected (bundles, score, status, warning codes), diagnostics)
+REVIEW_SCENARIOS = {
+    "required course with unknown eligibility": (
+        lambda r: r["courses"][1].update(eligibility_status="unknown"),
+        [
+            (BB, 100.0, "needs_review", ["eligibility_unknown"]),
+            (AA, 67.03, "needs_review", ["eligibility_unknown"]),
+            (AB, 30.12, "needs_review", ["eligibility_unknown"]),
+        ],
+        FIXTURE_DIAGNOSTICS,
+    ),
+    "required course that is ineligible": (
+        lambda r: r["courses"][1].update(eligibility_status="ineligible"),
+        [],
+        _nothing_explored("required_course_ineligible"),
+    ),
+    "required course completed and not repeatable": (
+        lambda r: r["courses"][0].update(already_completed=True),
+        [],
+        _nothing_explored("required_course_already_completed"),
+    ),
+    "unknown seat status": (
+        lambda r: _first_bundle(r).update(seat_status="unknown"),
+        [
+            (BB, 100.0, "ready", []),
+            (AA, 67.03, "needs_review", ["seat_status_unknown"]),
+            (AB, 30.12, "needs_review", ["seat_status_unknown"]),
+        ],
+        FIXTURE_DIAGNOSTICS,
+    ),
+    "full section with exclusion enabled": (
+        lambda r: (
+            _first_bundle(r).update(seat_status="full"),
+            r["constraints"].update(exclude_full_sections=True),
+        ),
+        [(BB, 100.0, "ready", [])],
+        {**FIXTURE_DIAGNOSTICS, "rejected_by_reason": {"section_full": 2, "time_overlap": 1}},
+    ),
+    "full section while exclusion is off": (
+        lambda r: _first_bundle(r).update(seat_status="full"),
+        [
+            (BB, 100.0, "ready", []),
+            (AA, 67.03, "needs_review", ["section_full_included"]),
+            (AB, 30.12, "needs_review", ["section_full_included"]),
+        ],
+        FIXTURE_DIAGNOSTICS,
+    ),
+    # Monday's cs400-A meeting goes online, so only Wednesday's walk is known:
+    # 6 minutes with math234-A, 18 with math234-B.
+    "online_sync meeting": (
+        lambda r: _first_meeting(r).update(mode="online_sync", building_id=None),
+        [
+            (BB, 100.0, "ready", []),
+            (AA, 81.87, "needs_review", ["location_uncertain"]),
+            (AB, 54.88, "needs_review", ["location_uncertain"]),
+        ],
+        FIXTURE_DIAGNOSTICS,
+    ),
+    "hybrid meeting": (
+        lambda r: _first_meeting(r).update(mode="hybrid"),
+        [(BB, 100.0, "ready", []), (AA, 67.03, "ready", []), (AB, 30.12, "ready", [])],
+        FIXTURE_DIAGNOSTICS,
+    ),
+    "in-person meeting without a building": (
+        lambda r: _first_meeting(r).update(building_id=None),
+        [
+            (BB, 100.0, "ready", []),
+            (AA, 81.87, "needs_review", ["building_unknown"]),
+            (AB, 54.88, "needs_review", ["building_unknown"]),
+        ],
+        FIXTURE_DIAGNOSTICS,
+    ),
+    # Without ALPHA-BETA, cs400-A + math234-A is scored as if it walked the
+    # 14 minutes its two 10-minute gaps allow, and ranks below every ready schedule.
+    "missing walking edge on a surviving schedule": (
+        lambda r: r["walking_edges"].pop(0),
+        [
+            (BB, 100.0, "ready", []),
+            (AB, 30.12, "ready", []),
+            (AA, 62.71, "needs_review", ["walking_time_unknown"]),
+        ],
+        FIXTURE_DIAGNOSTICS,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", REVIEW_SCENARIOS)
+def test_unknown_data_returns_200_with_review_status_or_a_reason(client, fixture_request, case):
+    mutate, expected_results, expected_diagnostics = REVIEW_SCENARIOS[case]
+    mutate(fixture_request)
+
+    response = client.post(GENERATE, json=fixture_request)
+
+    assert response.status_code == 200
+    body = response.json()
+    models.GenerateResponse.model_validate(body)
+    assert [
+        (
+            [s["bundle_id"] for s in r["selected"]][:2],
+            r["score"],
+            r["status"],
+            [warning.split(": ")[0] for warning in r["warnings"]],
+        )
+        for r in body["results"]
+    ] == expected_results
+    assert [r["rank"] for r in body["results"]] == list(range(1, len(expected_results) + 1))
+    assert body["diagnostics"] == expected_diagnostics
+    if expected_results and expected_results[0] == (BB, 100.0, "ready", []):
+        # The untouched schedule is still returned exactly as the shared fixture has it.
+        assert body["results"][0] == load_fixture_expected()["results"][0]
 
 
 def test_unexpected_failure_returns_503_internal_error(fixture_request, monkeypatch):

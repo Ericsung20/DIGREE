@@ -1,17 +1,21 @@
 """Pure optimization core: deterministic backtracking with pruning.
 
 No I/O, no clock, no randomness: the same request always yields the same
-response. Milestone A covers required-course schedules built from known data.
-Anything beyond that raises UnsupportedFeatureError instead of returning a
-response that ignores part of the request.
+response. The engine builds schedules from the required courses, enforces the
+hard constraints, and marks schedules that rest on unknown data as
+needs_review instead of guessing. Optional-course selection and the
+data-driven scoring factors are not built yet; a request that needs them
+raises UnsupportedFeatureError rather than getting a response that ignores
+part of it.
 """
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from math import prod
 
-from app import CONTRACT_VERSION
+from app import CONTRACT_VERSION, messages
+from app.messages import REJECTION_REASONS
 from app.models import (
     CandidateCourse,
     Diagnostics,
@@ -24,22 +28,15 @@ from app.models import (
     SelectedBundle,
     walking_minutes_by_pair,
 )
-from app.scoring import UNIMPLEMENTED_FACTORS, ranking_key, schedule_score
-
-DAY_ORDER = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
-
-# Keys of diagnostics.rejected_by_reason, in the order the checks run.
-# Each rejected combination is counted once, under the first check it fails.
-REJECTION_REASONS = (
-    "credits_out_of_range",
-    "outside_time_window",
-    "blocked_day",
-    "time_overlap",
-    "insufficient_walk_time",
-    "walk_exceeds_max",
+from app.scoring import (
+    UNIMPLEMENTED_FACTORS,
+    UnknownTravel,
+    neutral_walking_minutes,
+    ranking_key,
+    schedule_score,
 )
 
-REQUIRED_COURSE_WITHOUT_BUNDLES = "required_course_without_bundles"
+DAY_ORDER = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 
 
 class UnsupportedFeatureError(Exception):
@@ -72,8 +69,10 @@ class _Choice:
 class _Candidate:
     choices: tuple[_Choice, ...]  # in request order
     metrics: Metrics
-    score: float
-    status: str = "ready"
+    warnings: tuple[str, ...]
+    status: str
+    unknown_travel: UnknownTravel | None  # set when the metrics are known-transition subtotals
+    score: float = 0.0
 
     def sort_key(self) -> tuple:
         selection = ((c.course.course_id, c.bundle.bundle_id, c.credits) for c in self.choices)
@@ -85,82 +84,63 @@ def generate(request: GenerateRequest) -> GenerateResponse:
     if unsupported:
         raise UnsupportedFeatureError(unsupported)
 
+    required = [course for course in request.courses if course.is_required]
+    blocking = _blocking_reasons(required)
+    without_bundles = (
+        [messages.REQUIRED_COURSE_WITHOUT_BUNDLES]
+        if any(not course.section_bundles for course in required)
+        else []
+    )
+    if blocking:
+        # A required course that cannot be taken rules out every schedule.
+        return _response(
+            request,
+            [],
+            Diagnostics(
+                explored_combinations=0,
+                rejected_by_reason={},
+                search_truncated=False,
+                no_results_reasons=blocking + without_bundles,
+            ),
+        )
+
     search = _Search(request)
     search.run()
 
-    ranked = sorted(search.candidates, key=_Candidate.sort_key)[: request.top_k]
+    # Schedules with unknown travel are scored against the ones that are fully known.
+    weights = request.preferences.weights
+    neutral = neutral_walking_minutes(
+        c.metrics for c in search.candidates if c.unknown_travel is None
+    )
+    scored = [
+        replace(c, score=schedule_score(c.metrics, weights, c.unknown_travel, neutral))
+        for c in search.candidates
+    ]
+    ranked = sorted(scored, key=_Candidate.sort_key)[: request.top_k]
     results = [_to_result(rank, candidate) for rank, candidate in enumerate(ranked, start=1)]
 
-    return GenerateResponse(
-        contract_version=CONTRACT_VERSION,
-        request_id=request.request_id,
-        term=request.term,
-        results=results,
-        diagnostics=Diagnostics(
+    occurred = [reason for reason in REJECTION_REASONS if search.rejected[reason] > 0]
+    return _response(
+        request,
+        results,
+        Diagnostics(
             explored_combinations=search.explored,
-            rejected_by_reason={
-                reason: search.rejected[reason]
-                for reason in REJECTION_REASONS
-                if search.rejected[reason] > 0
-            },
+            rejected_by_reason={reason: search.rejected[reason] for reason in occurred},
             search_truncated=False,
-            no_results_reasons=[] if results else search.no_results_reasons(),
+            no_results_reasons=[] if results else without_bundles + occurred,
         ),
     )
 
 
 def find_unsupported_features(request: GenerateRequest) -> list[str]:
-    """List what the request needs beyond Milestone A, as '<path>: <message>'.
-
-    Only required courses are inspected: optional courses are never selected
-    in Milestone A, so their data cannot change the response.
-    """
+    """List what the request needs that is not built yet, as '<path>: <message>'."""
     details: list[str] = []
-    constraints = request.constraints
 
     for factor in UNIMPLEMENTED_FACTORS:
         if getattr(request.preferences.weights, factor) > 0:
             details.append(
                 f"preferences.weights.{factor}: scoring by {factor} is not implemented yet"
             )
-
-    for index, course in enumerate(request.courses):
-        if not course.is_required:
-            continue
-        path = f"courses[{index}]"
-        if course.eligibility_status != "eligible":
-            details.append(
-                f"{path}.eligibility_status: required course {course.course_id} is "
-                f"'{course.eligibility_status}'; eligibility handling is not implemented yet"
-            )
-        if course.already_completed and not course.repeatable:
-            details.append(
-                f"{path}.already_completed: required course {course.course_id} is completed and "
-                "not repeatable; completed-course handling is not implemented yet"
-            )
-        for bundle_index, bundle in enumerate(course.section_bundles):
-            bundle_path = f"{path}.section_bundles[{bundle_index}]"
-            if bundle.seat_status == "unknown":
-                details.append(
-                    f"{bundle_path}.seat_status: bundle {bundle.bundle_id} has unknown seat "
-                    "status; review-required results are not implemented yet"
-                )
-            elif bundle.seat_status == "full" and constraints.exclude_full_sections:
-                details.append(
-                    f"{bundle_path}.seat_status: bundle {bundle.bundle_id} is full and "
-                    "exclude_full_sections is true; full-section exclusion is not implemented yet"
-                )
-            for meeting_index, meeting in enumerate(bundle.meetings):
-                meeting_path = f"{bundle_path}.meetings[{meeting_index}]"
-                if meeting.mode != "in_person":
-                    details.append(
-                        f"{meeting_path}.mode: '{meeting.mode}' meetings are not implemented yet"
-                    )
-                elif meeting.building_id is None:
-                    details.append(
-                        f"{meeting_path}.building_id: in-person meetings without a building "
-                        "are not implemented yet"
-                    )
 
     if not any(course.is_required for course in request.courses):
         details.append(
@@ -191,10 +171,19 @@ def _needs_optional_courses(request: GenerateRequest) -> bool:
     return min(required_totals) < constraints.max_credits
 
 
+def _blocking_reasons(required: list[CandidateCourse]) -> list[str]:
+    """H8: reasons a required course cannot be taken at all."""
+    reasons = []
+    if any(course.eligibility_status == "ineligible" for course in required):
+        reasons.append(messages.REQUIRED_COURSE_INELIGIBLE)
+    if any(course.already_completed and not course.repeatable for course in required):
+        reasons.append(messages.REQUIRED_COURSE_ALREADY_COMPLETED)
+    return reasons
+
+
 class _Search:
     def __init__(self, request: GenerateRequest):
         self._constraints = request.constraints
-        self._weights = request.preferences.weights
         self._walk_minutes = walking_minutes_by_pair(request.walking_edges)
 
         slots = [
@@ -230,13 +219,6 @@ class _Search:
 
     def run(self) -> None:
         self._descend(0, 0, [])
-
-    def no_results_reasons(self) -> list[str]:
-        reasons = []
-        if any(not slot.course.section_bundles for slot in self._slots):
-            reasons.append(REQUIRED_COURSE_WITHOUT_BUNDLES)
-        reasons.extend(reason for reason in REJECTION_REASONS if self.rejected[reason] > 0)
-        return reasons
 
     def _descend(self, depth: int, credits_so_far: int, chosen: list[_Choice]) -> None:
         if depth == len(self._slots):
@@ -276,6 +258,8 @@ class _Search:
     def _bundle_violation(self, bundle: SectionBundle) -> str | None:
         """Violations a bundle carries on its own, whatever it is combined with."""
         constraints = self._constraints
+        if constraints.exclude_full_sections and bundle.seat_status == "full":
+            return "section_full"
         if any(
             m.start_min < constraints.earliest_start_min or m.end_min > constraints.latest_end_min
             for m in bundle.meetings
@@ -291,39 +275,70 @@ class _Search:
             return "time_overlap"
         return None
 
+    def _walk_between(self, origin: str | None, destination: str | None) -> int | None:
+        """Walking minutes between two buildings, or None when that is unknown."""
+        if origin is None or destination is None:
+            return None
+        if origin == destination:
+            return 0
+        return self._walk_minutes.get((origin, destination))
+
     def _evaluate_complete(self, total_credits: int, chosen: list[_Choice]) -> None:
         # Credits need no check here: the bounds test in _descend is exact once
         # the last course is placed.
         # Walking is judged on complete combinations only: two meetings that
         # are adjacent in a partial selection may not stay adjacent.
         constraints = self._constraints
-        meetings = [m for choice in chosen for m in choice.bundle.meetings]
+        buffer = constraints.walking_buffer_min
+        max_walk = constraints.max_walk_per_transition_min
+
         walking = idle_gap = campus_days = 0
         insufficient_time = exceeds_max = False
+        # Transitions whose walking time is unknown: how many, the time between
+        # the classes, and the longest walk that time and the limits allow.
+        unknown_transitions = unknown_gap = unknown_walk_ceiling = 0
         unknown_pairs: set[tuple[str, str]] = set()
+        online_beside_in_person: set[int] = set()  # request indexes of the online courses
 
+        timed = [(meeting, choice) for choice in chosen for meeting in choice.bundle.meetings]
         for day in DAY_ORDER:
             on_day = sorted(
-                (m for m in meetings if m.day == day), key=lambda m: (m.start_min, m.end_min)
+                (item for item in timed if item[0].day == day),
+                key=lambda item: (item[0].start_min, item[0].end_min),
             )
-            if on_day:
+            if any(_is_located(meeting) for meeting, _ in on_day):
                 campus_days += 1
-            for previous, following in pairwise(on_day):
+            for (previous, previous_choice), (following, following_choice) in pairwise(on_day):
                 gap = following.start_min - previous.end_min
-                if previous.building_id == following.building_id:
-                    walk = 0
-                else:
-                    pair = (previous.building_id, following.building_id)
-                    if pair not in self._walk_minutes:
-                        unknown_pairs.add(pair)
-                        continue
-                    walk = self._walk_minutes[pair]
-                if gap < walk + constraints.walking_buffer_min:
+
+                if not _is_located(previous) and not _is_located(following):
+                    idle_gap += gap  # online to online: nowhere to walk
+                    continue
+                if not _is_located(previous) or not _is_located(following):
+                    # Where the student takes the online class is unknown.
+                    online_choice = following_choice if _is_located(previous) else previous_choice
+                    online_beside_in_person.add(online_choice.request_index)
+                    unknown_transitions += 1
+                    unknown_gap += gap
+                    unknown_walk_ceiling += gap
+                    continue
+
+                walk = self._walk_between(previous.building_id, following.building_id)
+                if walk is None:
+                    if gap < buffer:
+                        insufficient_time = True  # too short even for a walk of 0 minutes
+                    else:
+                        longest = gap - buffer if max_walk is None else min(gap - buffer, max_walk)
+                        unknown_transitions += 1
+                        unknown_gap += gap
+                        unknown_walk_ceiling += longest
+                        if previous.building_id is not None and following.building_id is not None:
+                            unknown_pairs.add((previous.building_id, following.building_id))
+                    continue
+
+                if gap < walk + buffer:
                     insufficient_time = True
-                if (
-                    constraints.max_walk_per_transition_min is not None
-                    and walk > constraints.max_walk_per_transition_min
-                ):
+                if max_walk is not None and walk > max_walk:
                     exceeds_max = True
                 walking += walk
                 idle_gap += gap - walk
@@ -334,31 +349,33 @@ class _Search:
         if exceeds_max:
             self._reject("walk_exceeds_max", 1)
             return
-        if unknown_pairs:
-            # The schedule survives every known check but depends on a walking
-            # time nobody supplied. It must not be scored as if that were 0.
-            raise UnsupportedFeatureError(
-                [
-                    f"walking_edges: no walking time from {origin} to {destination}; "
-                    "review-required results are not implemented yet"
-                    for origin, destination in sorted(unknown_pairs)
-                ]
-            )
 
         self.explored += 1
-        metrics = Metrics(
-            total_credits=total_credits,
-            walking_minutes_weekly=walking,
-            idle_gap_minutes_weekly=idle_gap,
-            campus_days=campus_days,
-        )
+        choices = tuple(sorted(chosen, key=lambda c: c.request_index))
+        warnings = _warnings(choices, unknown_pairs, online_beside_in_person)
         self.candidates.append(
             _Candidate(
-                choices=tuple(sorted(chosen, key=lambda c: c.request_index)),
-                metrics=metrics,
-                score=schedule_score(metrics, self._weights),
+                choices=choices,
+                metrics=Metrics(
+                    total_credits=total_credits,
+                    walking_minutes_weekly=walking,
+                    idle_gap_minutes_weekly=idle_gap,
+                    campus_days=campus_days,
+                ),
+                warnings=warnings,
+                status=messages.status_for(list(warnings)),
+                unknown_travel=(
+                    UnknownTravel(gap_minutes=unknown_gap, max_walk_minutes=unknown_walk_ceiling)
+                    if unknown_transitions
+                    else None
+                ),
             )
         )
+
+
+def _is_located(meeting: Meeting) -> bool:
+    """In-person and hybrid meetings happen in a building; online ones do not."""
+    return meeting.mode != "online_sync"
 
 
 def _meetings_overlap(a: Meeting, b: Meeting) -> bool:
@@ -368,6 +385,56 @@ def _meetings_overlap(a: Meeting, b: Meeting) -> bool:
 
 def _bundles_overlap(a: SectionBundle, b: SectionBundle) -> bool:
     return any(_meetings_overlap(m, n) for m in a.meetings for n in b.meetings)
+
+
+def _warnings(
+    choices: tuple[_Choice, ...],
+    unknown_pairs: set[tuple[str, str]],
+    online_beside_in_person: set[int],
+) -> tuple[str, ...]:
+    """Warnings in messages.WARNING_CODES order, then request order."""
+    warnings = [
+        messages.eligibility_unknown(c.course.course_code)
+        for c in choices
+        if c.course.eligibility_status == "unknown"
+    ]
+    warnings += [
+        messages.seat_status_unknown(c.course.course_code, c.bundle.bundle_id)
+        for c in choices
+        if c.bundle.seat_status == "unknown"
+    ]
+    warnings += [
+        messages.section_full_included(c.course.course_code, c.bundle.bundle_id)
+        for c in choices
+        if c.bundle.seat_status == "full"
+    ]
+    warnings += [
+        messages.building_unknown(c.course.course_code, c.bundle.bundle_id)
+        for c in choices
+        if any(_is_located(m) and m.building_id is None for m in c.bundle.meetings)
+    ]
+    warnings += [
+        messages.walking_time_unknown(origin, destination)
+        for origin, destination in sorted(unknown_pairs)
+    ]
+    warnings += [
+        messages.location_uncertain(c.course.course_code, c.bundle.bundle_id)
+        for c in choices
+        if c.request_index in online_beside_in_person
+    ]
+    return tuple(warnings)
+
+
+def _response(
+    request: GenerateRequest, results: list[ScheduleResult], diagnostics: Diagnostics
+) -> GenerateResponse:
+    return GenerateResponse(
+        contract_version=CONTRACT_VERSION,
+        request_id=request.request_id,
+        term=request.term,
+        results=results,
+        diagnostics=diagnostics,
+    )
 
 
 def _to_result(rank: int, candidate: _Candidate) -> ScheduleResult:
@@ -386,9 +453,10 @@ def _to_result(rank: int, candidate: _Candidate) -> ScheduleResult:
             for choice in candidate.choices
         ],
         metrics=candidate.metrics,
-        warnings=[],
-        reasons=[
-            "All selected courses fit; weekly between-class walking: "
-            f"{candidate.metrics.walking_minutes_weekly} min."
-        ],
+        warnings=list(candidate.warnings),
+        reasons=messages.explain(
+            candidate.status,
+            candidate.unknown_travel is None,
+            candidate.metrics.walking_minutes_weekly,
+        ),
     )
