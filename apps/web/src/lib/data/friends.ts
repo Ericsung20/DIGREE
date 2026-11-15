@@ -1,7 +1,8 @@
 import expected from '../../mocks/expected.json';
 import {IS_MOCK, supabase} from '../supabase';
-import {getBundles, type Meeting} from './catalog';
+import type {Meeting} from './catalog';
 import {getRemote, readStore, setRemote, useRemote, useStore, writeStore} from './local-store';
+import {readScheduleItems, SAVED_ITEMS} from './saved-schedules';
 
 // Friends and schedule sharing. Real mode uses friendships, schedule_permissions and the
 // schedule_visibility / schedule_free_busy RPCs from the DB handoff.
@@ -86,15 +87,12 @@ export async function loadFriendSchedule(friend: Friend, term: string | null): P
     return e ? {access: 'none'} : {access: 'free_busy', blocks: data as Slot[]};
   }
   // full: RLS lets an accepted friend with "full" permission read the owner's saved schedules and items.
-  const {data: schedules} = await db.from('saved_schedules').select('id').eq('user_id', friend.id).eq('term', term).eq('mode', 'planned').limit(1);
-  const id = (schedules as {id: string}[] | null)?.[0]?.id;
-  if (!id) return {access: 'full', items: []};
-  const {data: items} = await db.from('saved_schedule_items').select('course_id, bundle_id, courses(code)').eq('schedule_id', id);
-  const rows = (items ?? []) as unknown as {course_id: string; bundle_id: string; courses: {code: string} | null}[];
-  return {
-    access: 'full',
-    items: await Promise.all(rows.map(async (r) => ({label: r.courses?.code ?? r.course_id, meetings: (await getBundles(r.course_id, term)).find((b) => b.bundle_id === r.bundle_id)?.meetings ?? []}))),
-  };
+  const {data: schedule, error: scheduleError} = await db.from('saved_schedules')
+    .select(`saved_schedule_items!inner(${SAVED_ITEMS})`).eq('user_id', friend.id).eq('term', term).eq('mode', 'planned')
+    .order('name', {ascending: false}).order('id').limit(1).maybeSingle();
+  if (scheduleError) return {access: 'none'};
+  const rows = readScheduleItems(schedule?.saved_schedule_items ?? []);
+  return {access: 'full', items: rows.map((r) => ({label: r.course_code, meetings: r.meetings}))};
 }
 
 // Mutations return a user-facing error, or null on success.

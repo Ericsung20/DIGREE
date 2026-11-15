@@ -5,6 +5,7 @@ import {useState} from 'react';
 import {AcademicProfileForm} from '@/components/academic-profile-form';
 import {CourseHistory} from '@/components/course-history';
 import {primary} from '@/components/screen';
+import {IS_MOCK} from '@/lib/supabase';
 
 // New-user flow: welcome -> academic profile -> course history.
 export default function OnboardingPage() {
@@ -19,7 +20,7 @@ export default function OnboardingPage() {
           <button type="button" onClick={() => setStep(1)} className={`${primary} mt-8`}>
             Get started
           </button>
-          <p className="mt-3 text-xs text-neutral-600">Demo mode. No account is created yet.</p>
+          {IS_MOCK && <p className="mt-3 text-xs text-neutral-600">Sample mode</p>}
         </div>
       )}
       {step === 1 && (

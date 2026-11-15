@@ -27,7 +27,7 @@ export function WeeklyTimetable({items, onSelect}: {items: TimetableItem[]; onSe
           </li>
         ))}
       </ul>
-      <div aria-hidden={!onSelect} className="flex text-[10px]">
+      <div aria-hidden={!onSelect} className="flex rounded-xl border border-neutral-200 bg-neutral-50 p-2 text-[10px]">
         <div className="relative w-9 shrink-0 text-neutral-500" style={{height: (end - start) * PX_PER_MIN + 16, marginTop: 16}}>
           {hours.map((h) => (
             <span key={h} className="absolute -translate-y-1/2" style={{top: (h - start) * PX_PER_MIN}}>
@@ -38,7 +38,7 @@ export function WeeklyTimetable({items, onSelect}: {items: TimetableItem[]; onSe
         {days.map((d) => (
           <div key={d} className="min-w-0 flex-1">
             <div className="h-4 text-center text-neutral-500">{d[0] + d.slice(1).toLowerCase()}</div>
-            <div className="relative border-l border-neutral-200" style={{height: (end - start) * PX_PER_MIN}}>
+            <div className="relative border-l border-neutral-200" style={{height: (end - start) * PX_PER_MIN, backgroundImage: 'linear-gradient(to bottom, var(--color-neutral-200) 1px, transparent 1px)', backgroundSize: `100% ${60 * PX_PER_MIN}px`}}>
               {items.flatMap((it, i) =>
                 it.meetings
                   .filter((m) => m.day === d)

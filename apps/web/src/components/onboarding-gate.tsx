@@ -4,7 +4,7 @@ import {usePathname, useRouter} from 'next/navigation';
 import {useEffect} from 'react';
 import {secondary} from '@/components/screen';
 import {resetRemote} from '@/lib/data/local-store';
-import {hasProfile} from '@/lib/data/profile';
+import {shouldOnboard} from '@/lib/data/profile';
 import {IS_MOCK, supabase} from '@/lib/supabase';
 
 /**
@@ -27,8 +27,8 @@ export function OnboardingGate() {
         if (!data.session) return onLogin ? undefined : router.replace('/login');
         if (onLogin) return router.replace('/');
       }
-      if (!pathname.startsWith('/onboarding') && !hasProfile()) router.replace('/onboarding');
-    })();
+      if (!pathname.startsWith('/onboarding') && await shouldOnboard() && !stale) router.replace('/onboarding');
+    })().catch((error) => console.error('Checking the academic profile failed', error));
     return () => {
       stale = true;
     };

@@ -14,8 +14,3 @@ test('mock request carries no user identifiers', () => {
   vi.stubEnv('DIGREE_MOCK', '1');
   expect(JSON.stringify(buildGenerateRequest())).not.toMatch(/user_id|email|gpa/i);
 });
-
-test('non-mock mode is not implemented yet', () => {
-  vi.stubEnv('DIGREE_MOCK', '0');
-  expect(() => buildGenerateRequest()).toThrow(/mock mode/);
-});

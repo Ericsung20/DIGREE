@@ -21,9 +21,17 @@ Open http://localhost:3000.
 | `npm run build` | Production build |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm run test` | Web unit and optimizer integration tests |
 
 ## Environment
 
-See `.env.example`. With `DIGREE_MOCK=1` the app runs on mock data, with no optimizer and no database.
+See `.env.example` for the independent settings:
 
-The optimizer is called only from server route handlers, never from the browser.
+| Data source | Optimizer | DIG behavior |
+| --- | --- | --- |
+| `NEXT_PUBLIC_DIGREE_DATA=mock` | `DIGREE_MOCK=1` | Sample schedule, saved in the browser |
+| `NEXT_PUBLIC_DIGREE_DATA=mock` | `DIGREE_MOCK=0` | Shared fixture sent to the configured optimizer |
+| `NEXT_PUBLIC_DIGREE_DATA=supabase` | `DIGREE_MOCK=0` | Signed-in user’s planned courses sent to the optimizer; selected schedule saved to Supabase |
+| `NEXT_PUBLIC_DIGREE_DATA=supabase` | `DIGREE_MOCK=1` | Sample schedule preview while other screens use Supabase |
+
+For live DIG, start the optimizer, sign in, add courses with status **Planned** in Profile, then select that term in DIG. If the Supabase project has no academic programs, users can go straight to Schedule. Self-reported enrollment and course chat require a term marked current in Supabase.

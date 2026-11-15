@@ -38,7 +38,12 @@ export async function callOptimizer(body: GenerateRequest): Promise<GenerateOutc
   } catch {
     return {kind: 'network', message: 'Optimizer could not be reached'};
   }
-  if (res.status === 200) return {kind: 'ok', data: (await res.json()) as GenerateResponse};
+  if (res.status === 200) {
+    const data = (await res.json().catch(() => null)) as GenerateResponse | null;
+    return data && data.term === body.term && Array.isArray(data.results) && data.diagnostics
+      ? {kind: 'ok', data}
+      : {kind: 'unavailable', message: 'Optimizer returned an invalid response'};
+  }
   const message: string = (await res.json().catch(() => null))?.error?.message ?? `Optimizer returned ${res.status}`;
   return {kind: res.status === 422 ? 'validation' : 'unavailable', message};
 }
@@ -60,12 +65,24 @@ function mockOutcome(variant?: string): GenerateOutcome {
   }
 }
 
-export async function generateSchedules(mockVariant?: string): Promise<GenerateOutcome> {
+/** True when the request is the shared fixture rather than rows from the database. */
+export const usesFixtureRequest = () => process.env.DIGREE_MOCK === '1' || process.env.NEXT_PUBLIC_DIGREE_DATA !== 'supabase';
+
+export async function generateSchedules(mockVariant?: string, rawInputs?: unknown): Promise<GenerateOutcome> {
   let body: GenerateRequest;
-  try {
+  if (usesFixtureRequest()) {
     body = buildGenerateRequest();
-  } catch (e) {
-    return {kind: 'unavailable', message: e instanceof Error ? e.message : 'Request could not be built'};
+  } else {
+    // Loaded on demand: it reads cookies, which only exist inside a Next.js request.
+    const {buildGenerateRequestFromDb} = await import('./dig-server');
+    try {
+      const built = await buildGenerateRequestFromDb(rawInputs);
+      if ('error' in built) return {kind: 'validation', message: built.error};
+      body = built;
+    } catch (error) {
+      console.error('Building the optimizer request failed', error);
+      return {kind: 'unavailable', message: 'The course catalog could not be loaded'};
+    }
   }
   if (process.env.DIGREE_MOCK === '1') {
     assertNoUserData(body);

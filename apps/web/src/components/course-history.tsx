@@ -13,7 +13,7 @@ const BADGE: Record<CourseRecordStatus, string> = {
 };
 
 /** Add and remove course records per term. Used in onboarding and Profile. */
-export function CourseHistory() {
+export function CourseHistory({planTerm}: {planTerm?: string} = {}) {
   const records = useCourseRecords();
   const terms = useTerms();
   const currentTerm = currentTermOf(terms);
@@ -21,13 +21,13 @@ export function CourseHistory() {
   const [code, setCode] = useState('');
   const [hits, setHits] = useState<CourseHit[]>([]);
   const [bundles, setBundles] = useState<Bundle[]>([]);
-  const [status, setStatus] = useState<CourseRecordStatus>('enrolled_self_reported');
+  const [status, setStatus] = useState<CourseRecordStatus>(planTerm ? 'planned' : 'enrolled_self_reported');
   const [bundle, setBundle] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const latest = useRef(0); // drops answers to searches the user has already typed past
 
-  const term = pickedTerm || currentTerm || terms.at(-1)?.id || '';
+  const term = pickedTerm || terms.find((t) => t.id === planTerm)?.id || currentTerm || terms.at(-1)?.id || '';
   // Self-reported enrollment only exists for the current term.
   const statuses: CourseRecordStatus[] = term === currentTerm ? ['enrolled_self_reported', 'planned', 'completed'] : ['planned', 'completed'];
   const st = statuses.includes(status) ? status : statuses[0];

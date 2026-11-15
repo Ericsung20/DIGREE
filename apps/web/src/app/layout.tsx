@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export default function RootLayout({children}: LayoutProps<'/'>) {
   return (
     <html lang="en">
-      <body className="bg-white text-neutral-900 antialiased">
+      <body className="bg-white text-neutral-900 antialiased sm:bg-neutral-50">
         <OnboardingGate />
         {children}
         <TabBar />

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import {useState} from 'react';
+import {useRef, useState} from 'react';
 import {EmptyState, Screen, secondary} from '@/components/screen';
 import {WeeklyTimetable} from '@/components/weekly-timetable';
 import {COURSES, bundleKey, currentTermOf, useBundlesFor, useTerms, type Meeting} from '@/lib/data/catalog';
@@ -54,6 +54,9 @@ function CourseDetail({entry}: {entry: Entry}) {
 export default function SchedulePage() {
   const [mode, setMode] = useState<Mode>('planned');
   const [picked, setPicked] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState(false);
+  const busy = useRef(false);
   const plan = usePlannedSchedule();
   const records = useCourseRecords();
 
@@ -76,6 +79,22 @@ export default function SchedulePage() {
   const entries = mode === 'planned' ? planned : enrolled;
   const timed = entries.filter((e) => e.meetings.length > 0);
   const detail = entries.find((e) => e.course_id === picked);
+  async function editPlan(courseId?: string) {
+    if (!plan || busy.current) return;
+    busy.current = true;
+    setEditing(true);
+    setError(false);
+    try {
+      if (courseId) await removePlannedCourse(plan, courseId);
+      else await deletePlannedSchedule(plan);
+      setPicked(null);
+    } catch {
+      setError(true);
+    } finally {
+      busy.current = false;
+      setEditing(false);
+    }
+  }
   const tab = (m: Mode, label: string) => (
     <button
       type="button"
@@ -132,7 +151,7 @@ export default function SchedulePage() {
                 </span>
               </button>
               {mode === 'planned' && (
-                <button type="button" onClick={() => removePlannedCourse(e.course_id)} className="text-accent focus-visible:outline-2 focus-visible:outline-accent">
+                <button type="button" disabled={editing} aria-label={`Remove ${e.code}`} onClick={() => editPlan(e.course_id)} className="text-accent focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50">
                   Remove
                 </button>
               )}
@@ -142,10 +161,11 @@ export default function SchedulePage() {
       )}
 
       {mode === 'planned' && planned.length > 0 && (
-        <button type="button" onClick={deletePlannedSchedule} className={`${secondary} mt-3 w-full`}>
+        <button type="button" disabled={editing} onClick={() => editPlan()} className={`${secondary} mt-3 w-full`}>
           Delete plan
         </button>
       )}
+      {mode === 'planned' && error && <p role="alert" className="mt-2 text-sm text-accent">Couldn’t update the plan. Try again.</p>}
       {mode === 'enrolled' && enrolled.length > 0 && (
         <Link href="/profile" className={`${secondary} mt-3 block text-center`}>
           Edit courses

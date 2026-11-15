@@ -31,6 +31,20 @@ test('mock switch yields empty and each error kind', async () => {
   expect((await generateSchedules('network')).kind).toBe('network');
 });
 
+// Opt-in: set OPTIMIZER_LIVE_URL=http://127.0.0.1:8000 to compare the running optimizer with the locked fixture.
+test.skipIf(!process.env.OPTIMIZER_LIVE_URL)('live optimizer answers the fixture request with the expected fixture', async () => {
+  vi.stubEnv('DIGREE_MOCK', '0');
+  vi.stubEnv('OPTIMIZER_URL', process.env.OPTIMIZER_LIVE_URL!);
+  const out = await generateSchedules(); // data source is mock here, so the request is the fixture
+  if (out.kind !== 'ok') throw new Error(`expected ok, got ${out.kind}: ${out.message}`);
+  expect(out.data).toEqual(fixture('expected.json'));
+  expect(out.data.results.map((r) => [r.rank, r.metrics.walking_minutes_weekly, r.selected.map((s) => s.bundle_id)])).toEqual([
+    [1, 0, ['cs400-B', 'math234-B', 'stat240-A']],
+    [2, 12, ['cs400-A', 'math234-A', 'stat240-A']],
+    [3, 36, ['cs400-A', 'math234-B', 'stat240-A']],
+  ]);
+});
+
 test('guard rejects user data anywhere in the body and accepts the fixture', () => {
   expect(() => assertNoUserData(fixture('request.json'))).not.toThrow();
   expect(() => assertNoUserData({courses: [{course_id: 'x', user_id: 1}]})).toThrow(/user_id/);

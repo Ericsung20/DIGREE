@@ -38,10 +38,11 @@ function subscribe(listener: () => void) {
 // Remote mode (Supabase): the same subscribe/notify plumbing over an in-memory cache.
 // A key is fetched once on first use; mutations write to Supabase and then update the cache.
 const memory = new Map<string, unknown>();
-const loading = new Set<string>();
+const loading = new Map<string, Promise<unknown>>();
 
 export const getRemote = <T,>(key: string, fallback: T): T => (memory.has(key) ? (memory.get(key) as T) : fallback);
 export function setRemote<T>(key: string, value: T): void {
+  loading.delete(key);
   memory.set(key, value);
   listeners.forEach((l) => l());
 }
@@ -55,11 +56,14 @@ export function useRemote<T>(key: string, fallback: T, load: () => Promise<T>): 
   return useSyncExternalStore(
     (listener) => {
       if (!memory.has(key) && !loading.has(key)) {
-        loading.add(key);
-        load()
-          .then((value) => setRemote(key, value))
+        const pending = load();
+        loading.set(key, pending);
+        pending
+          .then((value) => {
+            if (loading.get(key) === pending) setRemote(key, value);
+          })
           .catch((e) => {
-            loading.delete(key); // allow a retry on the next mount
+            if (loading.get(key) === pending) loading.delete(key);
             console.error(`Loading ${key} failed`, e);
           });
       }
