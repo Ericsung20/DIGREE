@@ -1,6 +1,7 @@
 // Server-only: reads the signed-in user's planned courses and the catalog, then builds the optimizer request.
 import {randomUUID} from 'node:crypto';
 import {parseDigInputs, toGenerateRequest, type CatalogRows, type DigDefaults, type GenerateRequest} from './dig-request';
+import {CS400_PREREQUISITE, hasPriorPrerequisite, type PriorAttempt} from './dig-prerequisites';
 import {supabaseServer} from './supabase-server';
 import type {Term} from './data/catalog';
 import {displayTerm} from './terms';
@@ -75,6 +76,17 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   const plannedIds = await plannedCourseIds(db, inputs.term);
   if (plannedIds.length === 0) return {error: 'Add planned courses for this term first.'};
   if (inputs.required.some((id) => !plannedIds.includes(id))) return {error: 'Your planned courses changed. Reopen DIG and try again.'};
+  if (CS400_PREREQUISITE.terms.has(inputs.term) && inputs.required.includes(CS400_PREREQUISITE.courseId)) {
+    const {data: history, error} = await db.from('user_course_records')
+      .select('term, status, grade_entries(letter_grade), terms(is_current)')
+      .eq('course_id', CS400_PREREQUISITE.prerequisiteId)
+      .lt('term', inputs.term).in('status', ['completed', 'enrolled_self_reported'])
+      .overrideTypes<PriorAttempt[], {merge: false}>();
+    if (error) throw error;
+    if (!hasPriorPrerequisite(history, inputs.term)) {
+      return {error: CS400_PREREQUISITE.message};
+    }
+  }
   const catalog = await db.from('courses').select('id, code, credit_options, repeatable').in('id', plannedIds).order('code');
   if (catalog.error) throw catalog.error;
   const courses: CatalogRows['courses'] = catalog.data;
