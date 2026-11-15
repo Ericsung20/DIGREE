@@ -4,18 +4,49 @@ Standalone scheduling optimization API for DIGREE. It receives normalized, anony
 
 - Contract: `contracts/openapi.yaml` (v1.0)
 - Reference request and response: `fixtures/request.json`, `fixtures/expected.json`
-- Status: **Milestone C** (optional-course selection, all six scoring factors, search limits; on top of the hard constraints and unknown-data handling)
+- Status: **Milestone D, local preparation.** The engine is complete for contract v1.0 and smoke-tested locally with the shared fixture. Still pending: a Docker build on a machine that has Docker, a real normalized request from the web app, and deployment.
 
 Nothing in a response is a university verification. `ready` means the optimizer found no problem in the data it was given, not that enrollment is assured.
 
-## Setup
+## Quick start
 
-Requires Python 3.12 or newer. From `apps/optimizer/`:
+Every command below says which directory to run it from. Paths are relative to the repository root unless stated.
+
+### Option A: Python
+
+Requires Python 3.12 or newer. Run from `apps/optimizer/`:
 
 ```bash
 python3.13 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+On Windows, use `py -3.13 -m venv .venv` and replace `.venv/bin/` with `.venv\Scripts\`.
+
+### Option B: Docker
+
+The build context is `apps/optimizer/`; nothing outside that directory is used. Run from the repository root:
+
+```bash
+docker build -t digree-optimizer apps/optimizer
+docker run --rm -p 8000:8000 digree-optimizer
+```
+
+The container listens on port 8000 and runs as an unprivileged user. To change the search limits (see Configuration), pass them with `-e`:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e DIGREE_MAX_SEARCH_STEPS=200000 \
+  -e DIGREE_MAX_OPTIONAL_COURSES=30 \
+  digree-optimizer
+```
+
+To use another host port, change the first number: `-p 9000:8000` serves on `http://localhost:9000`.
+
+Either way the API is then at `http://127.0.0.1:8000`, with interactive docs at `http://127.0.0.1:8000/docs`.
+
+The optimizer sends no CORS headers. It is meant to be called from the web app's server, not from a browser.
 
 ## Configuration
 
@@ -28,25 +59,53 @@ Two optional environment variables bound the search. They are read once at start
 
 A step is one section placement or one schedule evaluation. Limits count steps, not seconds, so the same request and limits give the same response on any machine. At the default, the slowest request measured took under one second.
 
-## Run
+## Smoke tests
+
+With the API running (either option above), open a second terminal.
+
+**All checks at once.** Run from `apps/optimizer/`. The script needs only Python 3.9 or newer, with no packages:
 
 ```bash
-.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python scripts/smoke.py
 ```
 
-Interactive docs are served at `http://127.0.0.1:8000/docs`.
+Without the virtual environment, `python3 scripts/smoke.py` works too. To test another address, add it: `scripts/smoke.py http://localhost:9000`. It prints one `PASS` or `FAIL` line per check and exits with status 0 when all pass.
+
+| Check | Request | Expected |
+|---|---|---|
+| Liveness | `GET /health` | 200, `{"status": "ok", "contract_version": "1.0"}` |
+| Baseline | `fixtures/request.json` | 200, body equal to `fixtures/expected.json` as parsed JSON |
+| Invalid request | the fixture with all six weights set to 0 | 422, `error.code` is `validation_error` |
+| No feasible schedule | the fixture with `constraints.earliest_start_min` set to 700 | 200, `results: []`, `no_results_reasons: ["outside_time_window"]` |
+| Unknown data | the fixture with `courses[0].section_bundles[0].seat_status` set to `"unknown"` | 200, statuses `ready`, `needs_review`, `needs_review`, each flagged result with a `seat_status_unknown` warning |
+
+**By hand with curl.** Run from the repository root:
 
 ```bash
 curl -s http://127.0.0.1:8000/health
 
 curl -s -X POST http://127.0.0.1:8000/v1/schedules/generate \
-  -H 'Content-Type: application/json' \
-  --data-binary @../../fixtures/request.json
+  -H "Content-Type: application/json" \
+  --data-binary "@fixtures/request.json"
+
+curl -s -X POST http://127.0.0.1:8000/v1/schedules/generate \
+  -H "Content-Type: application/json" \
+  -d "{}"
 ```
 
-The second command returns exactly the content of `fixtures/expected.json`.
+The second command returns the content of `fixtures/expected.json`; compare as parsed JSON, since spacing differs. The third returns 422. In Windows PowerShell, type `curl.exe` instead of `curl` and put each command on one line.
+
+**HTTP 503.** A healthy server never returns it, so it is checked by a test that makes the engine fail on purpose. Run from `apps/optimizer/`:
+
+```bash
+.venv/bin/python -m pytest "tests/test_contract.py::test_unexpected_failure_returns_503_internal_error"
+```
+
+The body is `{"error": {"code": "internal_error", "message": "The optimizer could not process the request.", "details": []}}`.
 
 ## Test
+
+Run from `apps/optimizer/`:
 
 ```bash
 .venv/bin/python -m pytest
@@ -71,6 +130,8 @@ The second command returns exactly the content of `fixtures/expected.json`.
 | `app/engine.py` | Course and section search, hard constraints, unknown-data handling, diagnostics |
 | `app/scoring.py` | Score formulas, neutral values and the ranking key |
 | `app/config.py` | Search limits and their environment variables |
+| `scripts/smoke.py` | Smoke test against a running server |
+| `Dockerfile`, `.dockerignore` | Standalone image; the image holds only the `app` package and its runtime dependencies |
 | `app/messages.py` | Every code and sentence the API emits |
 
 ## Responses
@@ -253,7 +314,17 @@ When either limit leaves combinations unexamined:
 ## Not implemented yet
 
 - **No variety rule for the top K.** The top results can all be one set of courses with different sections.
-- **No Dockerfile** (Milestone D).
+
+## Integration status
+
+| Step | State |
+|---|---|
+| Local API against the shared fixture | Done |
+| 422, empty results, `needs_review`, 503 behaviour | Done |
+| Docker image build and container run | **Pending**: written but not yet built, because the development machine had no Docker |
+| Request produced by the web app from real normalized data | **Pending** |
+| Handoff Section 13 data checks (I01-I10) | **Pending**, owned jointly with full-stack |
+| Deployment | **Pending** |
 
 ## Assumptions to confirm
 
