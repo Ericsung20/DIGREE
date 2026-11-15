@@ -46,6 +46,8 @@ node supabase/import-uw-term.mjs 1272 sections
 
 For the hosted database, add the existing `-ProjectRef` argument. The `sections-*.json` reports record unsuccessful fetches. Rerun the sections phase to retry those batches.
 
+To backfill instructor names in previously imported Fall 2026 sections, rerun the `sections` and `-SectionsOnly` commands above. The sections phase regenerates batches produced by the older name parser. The apply script uses the SQL checksums to pick up updated batches.
+
 Signed-in users can read historical course aggregates from `course_grade_stats`. Use `a_ab_rate` and `sample_size` for the optimizer's optional `grade_stats`, and use null when an aggregate is absent. The rate is the share of letter grades that were A or AB. The table holds course aggregates with a source URL and term coverage. Individual student grades remain in the owner-only `grade_entries` table.
 
 ## Import a full UW term

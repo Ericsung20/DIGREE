@@ -48,6 +48,14 @@ function campusMinute(milliseconds, end = false) {
   return end && minute === 0 ? 1440 : minute;
 }
 
+function instructorName(name) {
+  if (typeof name === 'string') return name.trim();
+  return [name?.first, name?.middle, name?.last]
+    .filter((part) => typeof part === 'string' && part.trim())
+    .map((part) => part.trim())
+    .join(' ');
+}
+
 function normalizePackage(pack, course, buildings) {
   if (pack.published !== true || !pack.docId || !pack.sections?.length) return null;
   const meetings = new Map();
@@ -56,7 +64,8 @@ function normalizePackage(pack, course, buildings) {
   for (const section of pack.sections) {
     if (section.type && section.sectionNumber) sections.push(`${section.type} ${section.sectionNumber}`);
     for (const instructor of section.instructors ?? []) {
-      if (typeof instructor.name === 'string' && instructor.name.trim()) instructors.add(instructor.name.trim());
+      const name = instructorName(instructor?.name);
+      if (name) instructors.add(name);
     }
     const classes = (section.classMeetings ?? []).filter(meeting => meeting.meetingType === 'CLASS');
     const mode = section.instructionMode ?? '';

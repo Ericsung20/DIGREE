@@ -112,12 +112,14 @@ async function details() {
 async function sections() {
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   const batchSize = 100;
+  // Regenerate earlier batches to read the structured instructor names returned by UW.
+  const reportVersion = 2;
   for (let offset = 0; offset < manifest.entries.length; offset += batchSize) {
     const number = String(offset / batchSize + 1).padStart(3, '0');
     const path = join(directory, 'sections-' + number + '.sql');
     const reportPath = join(directory, 'sections-' + number + '.json');
-    const previous = await readIfPresent(reportPath);
-    if (previous && JSON.parse(previous).failed.length === 0 && await readIfPresent(path) !== null) continue;
+    const previous = JSON.parse(await readIfPresent(reportPath) ?? 'null');
+    if (previous?.version === reportVersion && previous.failed.length === 0 && await readIfPresent(path) !== null) continue;
     const entries = manifest.entries.slice(offset, offset + batchSize);
     const packages = [], buildings = new Map(), failed = [];
     let skipped = 0;
@@ -136,7 +138,7 @@ async function sections() {
       }
     })()));
     await writeAtomic(path, asSql({term: manifest.term, courses: [], packages, stats: [], buildings: [...buildings.values()]}));
-    await writeAtomic(reportPath, JSON.stringify({courses: entries.length, bundles: packages.length, skipped, failed}));
+    await writeAtomic(reportPath, JSON.stringify({version: reportVersion, courses: entries.length, bundles: packages.length, skipped, failed}));
     console.log('Section batch ' + number + ': ' + packages.length + ' bundles, ' + failed.length + ' errors');
   }
 }

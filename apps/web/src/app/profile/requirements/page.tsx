@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import {useEffect, useRef, useState} from 'react';
+import {useSearchParams} from 'next/navigation';
+import {Suspense, useEffect, useRef, useState} from 'react';
 import {EmptyState, Screen, field, secondary} from '@/components/screen';
 import {useCourseRecords, useGrades} from '@/lib/data/course-records';
 import {removeDarsProgress, saveDarsProgress, useDarsProgress} from '@/lib/data/degree-progress';
@@ -49,12 +50,13 @@ function DarsChecklist({programId}: {programId: string}) {
   </section>;
 }
 
-export default function RequirementsPage() {
+function Requirements() {
+  const params = useSearchParams();
   const profile = useProfile();
   const {programs} = useAcademicOptions();
   const records = useCourseRecords();
   const grades = useGrades();
-  const [mode, setMode] = useState<'courses' | 'dars'>('courses');
+  const mode = params.get('source') === 'dars' ? 'dars' : 'courses';
   const [documentUrl, setDocumentUrl] = useState('');
   const [error, setError] = useState('');
   const fileRequest = useRef(0);
@@ -64,6 +66,12 @@ export default function RequirementsPage() {
   const credits = completed.reduce((total, item) => total + item.credits, 0);
   const isCurrentCs = program?.label === 'Computer Sciences, BS' && program.catalog_year === 2026;
   const source = program && program.catalog_year < 2026 ? 'https://guide.wisc.edu/archive/' : isCurrentCs ? CS_GUIDE : UW_GUIDE;
+  function setMode(next: 'courses' | 'dars') {
+    const url = new URL(window.location.href);
+    if (next === 'dars') url.searchParams.set('source', 'dars');
+    else url.searchParams.delete('source');
+    window.history.replaceState(null, '', url);
+  }
   return (
     <Screen title="Degree requirements" back={{href: '/profile', label: 'Back to profile'}}
       description={program ? `${program.label} · ${program.catalog_year}–${String(program.catalog_year + 1).slice(-2)} Guide` : undefined}>
@@ -118,4 +126,8 @@ export default function RequirementsPage() {
       </>}
     </Screen>
   );
+}
+
+export default function RequirementsPage() {
+  return <Suspense fallback={<Screen title="Degree requirements"><p role="status">Loading requirements…</p></Screen>}><Requirements /></Suspense>;
 }

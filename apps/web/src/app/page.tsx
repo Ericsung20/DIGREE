@@ -125,7 +125,7 @@ function Schedule() {
     </Link>
   );
 
-  if (detail) return <CourseDetail entry={detail} back={back} editHref={mode === 'enrolled' && term === currentTerm ? `${add}&course=${encodeURIComponent(detail.course_id)}` : undefined} />;
+  if (detail) return <CourseDetail entry={detail} back={back} editHref={mode === 'enrolled' ? `${add}&course=${encodeURIComponent(detail.course_id)}` : undefined} />;
   return (
     <Screen title="My schedule" home actions={
       <Link href="/friends" aria-label="Friends" className={iconButton}>

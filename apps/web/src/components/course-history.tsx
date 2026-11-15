@@ -33,11 +33,16 @@ export function CourseHistory({planTerm, initialTerm, onlyTerm = false, initialC
   const statuses: CourseRecordStatus[] = term === currentTerm ? ['enrolled_self_reported', 'planned', 'completed'] : historical ? ['completed', 'planned'] : ['planned', 'completed'];
   const st = statuses.includes(status) ? status : statuses[0];
   const course = hits.find((c) => c.code.toLowerCase() === code.trim().toLowerCase());
-  const needsSection = st === 'enrolled_self_reported' && !!course;
-  const bundleId = needsSection ? (bundles.find((b) => b.bundle_id === bundle) ?? bundles[0])?.bundle_id ?? null : null;
+  const canChooseSection = !!course && (st === 'enrolled_self_reported' || st === 'completed');
+  const chosenBundle = bundles.find((b) => b.bundle_id === bundle);
+  const defaultBundle = st === 'enrolled_self_reported' ? bundles[0] : undefined;
+  const bundleId = canChooseSection ? (chosenBundle ?? defaultBundle)?.bundle_id ?? null : null;
 
   async function lookUp(nextCode: string, nextTerm: string) {
     const ticket = ++latest.current;
+    setHits([]);
+    setBundles([]);
+    setBundle('');
     try {
       const found = await searchCourses(nextCode);
       if (ticket !== latest.current) return;
@@ -64,8 +69,11 @@ export function CourseHistory({planTerm, initialTerm, onlyTerm = false, initialC
           setBusy(false);
           setError(err);
           if (!err) {
+            latest.current++;
             setCode('');
+            setHits([]);
             setBundles([]);
+            setBundle('');
           }
         }}
       >
@@ -125,11 +133,12 @@ export function CourseHistory({planTerm, initialTerm, onlyTerm = false, initialC
         {st === 'enrolled_self_reported' && (
           <p className="text-xs text-neutral-600">Use this for current courses you enter yourself.</p>
         )}
-        {needsSection &&
+        {canChooseSection &&
           (bundles.length > 0 ? (
             <label className="block text-xs text-neutral-600">
               Section
               <select name="section" value={bundleId ?? ''} onChange={(e) => setBundle(e.target.value)} className={field}>
+                {st === 'completed' && <option value="">Unknown section</option>}
                 {bundles.map((b) => (
                   <option key={b.bundle_id} value={b.bundle_id}>
                     {b.label} · {b.summary}
@@ -175,7 +184,7 @@ export function CourseHistory({planTerm, initialTerm, onlyTerm = false, initialC
                     <button type="button" onClick={() => removeCourseRecord(r.id)} className="text-sm text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
                       Remove
                     </button>
-                    {t.id === currentTerm && r.status === 'enrolled_self_reported' && (
+                    {(r.status === 'completed' || (t.id === currentTerm && r.status === 'enrolled_self_reported')) && (
                       <SectionEditor record={r} expanded={initialCourse === r.course_id} />
                     )}
                   </li>
@@ -206,11 +215,11 @@ function SectionEditor({record, expanded}: {record: CourseRecord; expanded: bool
       {open && sections?.length ? (
         <select aria-label="Change section" className={field} value={record.bundle_id ?? ''} disabled={busy} onChange={async (event) => {
           setBusy(true);
-          try {setError(await changeCourseSection(record.id, event.target.value));}
+          try {setError(await changeCourseSection(record.id, event.target.value || null));}
           catch {setError('Couldn’t save the section.');}
           finally {setBusy(false);}
         }}>
-          <option value="" disabled>Select a section</option>
+          <option value="" disabled={record.status !== 'completed'}>{record.status === 'completed' ? 'Unknown section' : 'Select a section'}</option>
           {sections.map((section) => <option key={section.bundle_id} value={section.bundle_id}>{section.label} · {section.summary}</option>)}
         </select>
       ) : open && !error && <p role="status" className="mt-1 text-xs text-neutral-600">{sections ? 'Sections are unavailable for this course.' : 'Loading sections…'}</p>}

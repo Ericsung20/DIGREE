@@ -79,9 +79,9 @@ export async function setCountsTowardMajor(id: string, value: boolean): Promise<
   put(current().map((r) => (r.id === id ? {...r, counts_toward_major: value} : r)));
 }
 
-export async function changeCourseSection(id: string, bundleId: string): Promise<string | null> {
+export async function changeCourseSection(id: string, bundleId: string | null): Promise<string | null> {
   if (!IS_MOCK) {
-    const {error} = await supabase().from('user_course_records').update({bundle_id: bundleId}).eq('id', id).eq('status', 'enrolled_self_reported');
+    const {error} = await supabase().from('user_course_records').update({bundle_id: bundleId}).eq('id', id).in('status', ['enrolled_self_reported', 'completed']);
     if (error) return error.message;
   }
   put(current().map((record) => record.id === id ? {...record, bundle_id: bundleId} : record));
