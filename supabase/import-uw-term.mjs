@@ -62,8 +62,11 @@ async function collectCatalog() {
       repeatable: hit.repeatable === 'Y', source: 'uw_public_course_search', fetched_at,
     };
     entries.set(courseId, { course, courseId, subject: hit.subject, catalogNumber: hit.catalogNumber, courseDesignation: code });
+    const aliases = (hit.allCrossListedSubjects ?? []).flatMap(({shortDescription}) =>
+      shortDescription ? [`${shortDescription} ${hit.catalogNumber}`] : []);
     requisites.push({
       course_id: course.id,
+      course_aliases: [...new Set([code, ...aliases])],
       enrollment_requisites: hit.enrollmentPrerequisites?.trim() || null,
       advisory_requisites: hit.advisoryPrerequisites?.trim() || null,
       requirement_groups: hit.courseRequirements ?? null,
@@ -91,15 +94,16 @@ async function requisites() {
   const {requisites: rows, summary} = await collectCatalog();
   const json = JSON.stringify(rows).replaceAll('\\', '\\\\').replaceAll("'", "''");
   await writeAtomic(join(directory, 'requisites.sql'), `insert into public.course_requisites (
-  term, course_id, enrollment_requisites, advisory_requisites, requirement_groups, source_url, fetched_at
+  term, course_id, course_aliases, enrollment_requisites, advisory_requisites, requirement_groups, source_url, fetched_at
 )
-select '${termCode}', course.id, req.enrollment_requisites, req.advisory_requisites, req.requirement_groups,
+select '${termCode}', course.id, req.course_aliases, req.enrollment_requisites, req.advisory_requisites, req.requirement_groups,
   '${enroll}', '${fetched_at}'::timestamptz
 from jsonb_to_recordset(E'${json}'::jsonb) as req(
-  course_id text, enrollment_requisites text, advisory_requisites text, requirement_groups jsonb
+  course_id text, course_aliases text[], enrollment_requisites text, advisory_requisites text, requirement_groups jsonb
 )
 join public.courses as course on course.id = req.course_id and course.source = 'uw_public_course_search'
 on conflict (term, course_id) do update set
+  course_aliases = excluded.course_aliases,
   enrollment_requisites = excluded.enrollment_requisites,
   advisory_requisites = excluded.advisory_requisites,
   requirement_groups = excluded.requirement_groups,

@@ -11,21 +11,26 @@ const stat = {id: 'uw-025501', code: 'STAT 340', credit_options: [3], repeatable
 test.each([
   {name: 'an unchecked planned course', planned: [cs200, cs400, stat], related: false},
   {name: 'a catalog suggestion', planned: [cs200, stat], related: true},
-])('excludes CS 400 without CS 300 when it is $name', async ({planned, related}) => {
+])('excludes a course with a missing requisite when it is $name', async ({planned, related}) => {
   const db = {
     auth: {getUser: async () => ({data: {user: {id: 'qa-user'}}})},
     from: (table: string) => ({
       select(columns: string) {
-        let data: unknown[] = [];
+        let data: unknown[] | {academic_programs: {label: string}} = [];
         if (table === 'courses') data = columns.includes('section_bundles') ? [cs400] : planned;
         if (table === 'user_course_records' && columns === 'course_id') {
           data = planned.map(({id}) => ({course_id: id}));
         }
+        if (table === 'academic_profiles') data = {academic_programs: {label: 'Computer Sciences, BS'}};
+        if (table === 'course_requisites') data = [
+          {course_id: cs400.id, course_aliases: [cs400.code], enrollment_requisites: 'COMP SCI 300'},
+          ...[cs200, stat].map(course => ({course_id: course.id, enrollment_requisites: 'None'})),
+        ];
         const result = Promise.resolve({data, error: null});
         const chain = () => query;
         const query = {
-          eq: chain, ilike: chain, in: chain, lt: chain, neq: chain, order: chain, range: chain,
-          limit: chain, overrideTypes: chain, then: result.then.bind(result),
+          eq: chain, ilike: chain, in: chain, lte: chain, neq: chain, order: chain, range: chain,
+          maybeSingle: chain, limit: chain, overrideTypes: chain, then: result.then.bind(result),
         };
         return query;
       },
@@ -40,4 +45,5 @@ test.each([
 
   if ('error' in result) throw new Error(result.error);
   expect(result.courses.map(({course_id}) => course_id)).toEqual([cs200.id, stat.id]);
+  expect(result.courses.every(course => course.eligibility_status === 'eligible')).toBe(true);
 });

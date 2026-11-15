@@ -53,7 +53,7 @@ export function parseDigInputs(raw: unknown): DigInputs | {error: string} {
 
 /** Catalog rows for the candidate courses, as read from the database. */
 export type CatalogRows = {
-  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean}[];
+  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; eligibility?: S['CandidateCourse']['eligibility_status']}[];
   bundles: {course_id: string; bundle_id: string; seat_status: S['SectionBundle']['seat_status']; instructor_score: number | null}[];
   meetings: {course_id: string; bundle_id: string; day: Day; start_min: number; end_min: number; mode: S['Mode']; building_id: string | null}[];
   stats: {course_id: string; a_ab_rate: number; sample_size: number}[];
@@ -91,7 +91,7 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
         course_code: c.code,
         credit_options: c.credit_options,
         is_required: inputs.required.includes(c.id),
-        eligibility_status: 'unknown' as const, // prerequisites are not checked anywhere yet
+        eligibility_status: c.eligibility ?? 'unknown',
         already_completed: rows.completedCourseIds.includes(c.id),
         repeatable: c.repeatable,
         requirement_fit: null,

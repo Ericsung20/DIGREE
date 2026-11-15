@@ -73,7 +73,7 @@ node supabase/import-uw-term.mjs 1274 requisites
 npx.cmd --yes supabase@3.1.0 db query --file supabase/.temp/uw-1274/requisites.sql
 ```
 
-For a hosted import, add `--remote=<project-ref> --yes` to the query command. Use term code `1272` and its output directory for Fall 2026. Enrollment and advisory text come from separate UW fields. Requirement groups preserve the published group IDs and associated class numbers. Evaluate those descriptions and section-specific rules separately before adding new scheduler checks.
+For a hosted import, add `--remote=<project-ref> --yes` to the query command. Use term code `1272` and its output directory for Fall 2026. Enrollment and advisory text come from separate UW fields. The import stores published catalog aliases for cross-listed courses and the source map of requirement groups to class numbers. Run the alias migration before refreshing the import.
 
 ## Import UW walking estimates
 

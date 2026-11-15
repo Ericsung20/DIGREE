@@ -19,6 +19,12 @@ Use the attached `DIGREE.html` board export for screen order, actions, and displ
 
 For each rerun, follow the board's button sequence and then reload the destination to confirm what persisted. Change terms when testing Schedule, DIG, and GPA. Check missing data using an absent row or relationship so that fixture values cannot mask the gap. For a server-error check, fail one browser request and confirm that Try again submits the same conditions to the live Optimizer.
 
+### DIG course eligibility
+
+Use UW catalog requisites for the selected term. Check required courses, unchecked planned courses, and catalog additions against the same course history. Verify STAT 340 with an earlier STAT 240 and one accepted MATH course, then move STAT 240 into the selected term and confirm it fails. For COMP SCI 400, repeat with an absent, failed, and completed COMP SCI 300 attempt. Try an explicitly concurrent course with both courses required, and an equivalent cross-listed course recorded under its other code.
+
+Earlier current enrollment can provisionally satisfy a prior-course requirement. Courses with missing or ambiguous requisite data, and courses with section-specific restrictions beyond the catalog text, require review before automatic additions. A concurrent course can be counted when the user reports taking it in the selected term or both courses must appear in the plan. Standing, placement, permission, and other facts that DIG cannot derive from its records remain for review. Academic history and grades stay on the web server. DIG sends only the resulting eligibility status to the Optimizer.
+
 ## Reproduced bugs
 
 | Reproduction | Expected | Before the fix | Fix |

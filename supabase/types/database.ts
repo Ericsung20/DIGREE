@@ -319,6 +319,7 @@ export type Database = {
       course_requisites: {
         Row: {
           advisory_requisites: string | null;
+          course_aliases: string[] | null;
           course_id: string;
           enrollment_requisites: string | null;
           fetched_at: string;
@@ -329,6 +330,7 @@ export type Database = {
         ComputedFields: never;
         Insert: {
           advisory_requisites?: string | null;
+          course_aliases?: string[] | null;
           course_id: string;
           enrollment_requisites?: string | null;
           fetched_at: string;
@@ -338,6 +340,7 @@ export type Database = {
         };
         Update: {
           advisory_requisites?: string | null;
+          course_aliases?: string[] | null;
           course_id?: string;
           enrollment_requisites?: string | null;
           fetched_at?: string;
