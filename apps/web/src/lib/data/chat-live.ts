@@ -2,7 +2,9 @@
 
 import {useEffect, useRef, useState} from 'react';
 import {IS_MOCK, supabase} from '../supabase';
-import {myChatRooms, reportMessage, sendMessage, useMessages, type ChatMessage, type ChatRoom} from './chat';
+import {myChatRooms, reportMessage, sendMessage, useMessages, useNickDraws, type ChatMessage, type ChatRoom} from './chat';
+import {makeAlias} from './community';
+import {readStore, useStore, writeStore} from './local-store';
 import type {CourseRecord} from './course-records';
 
 type MessageRow = Omit<ChatMessage, 'mine' | 'reported'>;
@@ -10,7 +12,61 @@ type Thread = {alias: string | null; messages: MessageRow[]; status: 'loading' |
 const EMPTY_THREAD: Thread = {alias: null, messages: [], status: 'loading'};
 const MESSAGE_COLUMNS = 'id, room_id, alias, body, created_at';
 
+/**
+ * The name shown for a chat alias. The database hands out an opaque "Student-…" alias per room;
+ * the app shows a friendly two-word name derived from it and from today's date, so names reset every day.
+ */
+export function nickname(alias: string): string {
+  return alias.startsWith('Student-') ? makeAlias(`${alias}|${new Date().toISOString().slice(0, 10)}`) : alias;
+}
+
+// When each room was last opened, kept on this device: the database has no read receipts.
+const READ = 'digree.chat.read';
+const NEVER: Record<string, string> = {};
+export function markRoomRead(roomId: string, at: string): void {
+  const read = readStore(READ, NEVER);
+  if (!(read[roomId] >= at)) writeStore(READ, {...read, [roomId]: at});
+}
+
+export type RoomPreview = {last: Pick<ChatMessage, 'alias' | 'body' | 'created_at'> | null; unread: number};
+const PREVIEW_DEPTH = 30;
+
+/** Latest message and unread count for each room in the list. */
+export function useRoomPreviews(rooms: ChatRoom[] | null | undefined): Record<string, RoomPreview> {
+  const read = useStore(READ, NEVER);
+  const sample = useMessages();
+  const [live, setLive] = useState<Record<string, MessageRow[]>>({});
+  const key = (rooms ?? []).map((room) => room.room_id).join(',');
+  useEffect(() => {
+    if (IS_MOCK || !key) return;
+    let active = true;
+    async function load() {
+      const db = supabase();
+      const lists = await Promise.all(key.split(',').map(async (roomId) => {
+        const {data, error} = await db.from('chat_messages').select(MESSAGE_COLUMNS).eq('room_id', roomId).order('created_at', {ascending: false}).limit(PREVIEW_DEPTH);
+        return [roomId, error ? [] : (data as MessageRow[])] as const;
+      }));
+      if (active) setLive(Object.fromEntries(lists));
+    }
+    void load();
+    window.addEventListener('focus', load);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', load);
+    };
+  }, [key]);
+  return Object.fromEntries((rooms ?? []).map((room) => {
+    const newestFirst = IS_MOCK
+      ? sample.filter((message) => message.room_id === room.room_id && !message.reported).sort((a, b) => b.created_at.localeCompare(a.created_at))
+      : live[room.room_id] ?? [];
+    const since = read[room.room_id] ?? '';
+    const mine = (message: MessageRow) => (IS_MOCK ? (message as ChatMessage).mine : message.alias === room.my_alias);
+    return [room.room_id, {last: newestFirst[0] ?? null, unread: newestFirst.filter((message) => message.created_at > since && !mine(message)).length}];
+  }));
+}
+
 export function useChatRooms(records: CourseRecord[]): ChatRoom[] | null | undefined {
+  const draws = useNickDraws();
   const [rooms, setRooms] = useState<ChatRoom[] | null>();
   useEffect(() => {
     if (IS_MOCK) return;
@@ -26,11 +82,11 @@ export function useChatRooms(records: CourseRecord[]): ChatRoom[] | null | undef
       window.removeEventListener('focus', load);
     };
   }, [records]);
-  return IS_MOCK ? myChatRooms(records) : rooms;
+  return IS_MOCK ? myChatRooms(records, draws) : rooms;
 }
 
 function useSampleThread(room: ChatRoom, records: CourseRecord[]) {
-  const messages = useMessages().filter((m) => m.room_id === room.room_id && !m.reported);
+  const messages = useMessages().filter((m) => m.room_id === room.room_id);
   return {
     alias: room.my_alias,
     messages,
@@ -116,7 +172,7 @@ function useLiveThread(room: ChatRoom) {
 
   return {
     alias: thread.alias,
-    messages: thread.messages.filter((m) => !reported.includes(m.id)).map((m) => ({...m, mine: m.alias === thread.alias})),
+    messages: thread.messages.map((m) => ({...m, mine: m.alias === thread.alias, reported: reported.includes(m.id)})),
     status: thread.status,
     send,
     report,

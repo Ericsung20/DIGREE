@@ -11,8 +11,17 @@ export type ChatMessage = {id: string; room_id: string; alias: string; body: str
 const roomId = (courseId: string) => `${CURRENT_TERM}-${courseId}`;
 const OTHERS: Record<string, number> = {cs400: 23, math234: 30, stat240: 17}; // sample head counts
 
+// Sample mode lets the user draw a new nickname per room; the count of redraws is all that is stored.
+const NICKS = 'digree.chat.nicks';
+const NO_NICKS: Record<string, number> = {};
+export const useNickDraws = () => useStore(NICKS, NO_NICKS);
+export function rerollNickname(id: string): void {
+  const draws = readStore(NICKS, NO_NICKS);
+  writeStore(NICKS, {...draws, [id]: (draws[id] ?? 0) + 1});
+}
+
 /** Rooms the user may see: current term + enrolled_self_reported only, sorted by course code. */
-export function myChatRooms(records: CourseRecord[]): ChatRoom[] {
+export function myChatRooms(records: CourseRecord[], draws: Record<string, number> = typeof localStorage === 'undefined' ? NO_NICKS : readStore(NICKS, NO_NICKS)): ChatRoom[] {
   return records
     .filter((r) => r.term === CURRENT_TERM && r.status === 'enrolled_self_reported')
     .map((r) => ({
@@ -21,7 +30,7 @@ export function myChatRooms(records: CourseRecord[]): ChatRoom[] {
       course_id: r.course_id,
       course_code: COURSES.find((c) => c.id === r.course_id)?.code ?? r.course_id,
       participant_count: (OTHERS[r.course_id] ?? 0) + 1,
-      my_alias: makeAlias(roomId(r.course_id)),
+      my_alias: makeAlias(roomId(r.course_id) + (draws[roomId(r.course_id)] || '')),
     }))
     .sort((a, b) => a.course_code.localeCompare(b.course_code));
 }

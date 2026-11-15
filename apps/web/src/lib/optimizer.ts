@@ -1,14 +1,14 @@
 // Server-only: called from the /api/dig/generate route handler, never from the browser.
 import type {components} from './contract/types';
 import expected from '../mocks/expected.json';
-import {buildGenerateRequest, type GenerateRequest} from './data/generate-request';
+import {buildGenerateRequest, buildSampleGenerateRequest, type GenerateRequest} from './data/generate-request';
 
 export type GenerateResponse = components['schemas']['GenerateResponse'];
 export type ScheduleResult = components['schemas']['ScheduleResult'];
 
 /** Each failure mode stays distinct so the UI can explain it differently. */
 export type GenerateOutcome =
-  | {kind: 'ok'; data: GenerateResponse}
+  | {kind: 'ok'; data: GenerateResponse; request?: GenerateRequest}
   | {kind: 'validation'; message: string} // optimizer 422
   | {kind: 'unavailable'; message: string} // optimizer 503 or any other non-200
   | {kind: 'network'; message: string}; // optimizer unreachable
@@ -53,7 +53,7 @@ function mockOutcome(variant?: string): GenerateOutcome {
   const data = expected as GenerateResponse;
   switch (variant) {
     case 'empty':
-      return {kind: 'ok', data: {...data, results: [], diagnostics: {...data.diagnostics, no_results_reasons: ['Mock: required courses overlap in time.']}}};
+      return {kind: 'ok', data: {...data, results: [], diagnostics: {...data.diagnostics, no_results_reasons: ['outside_time_window', 'time_overlap']}}};
     case '422':
       return {kind: 'validation', message: 'Mock validation error'};
     case '503':
@@ -71,7 +71,9 @@ export const usesFixtureRequest = () => process.env.DIGREE_MOCK === '1' || proce
 export async function generateSchedules(mockVariant?: string, rawInputs?: unknown): Promise<GenerateOutcome> {
   let body: GenerateRequest;
   if (usesFixtureRequest()) {
-    body = buildGenerateRequest();
+    const built = process.env.DIGREE_MOCK === '1' || rawInputs === undefined ? buildGenerateRequest() : buildSampleGenerateRequest(rawInputs);
+    if ('error' in built) return {kind: 'validation', message: built.error};
+    body = built;
   } else {
     // Loaded on demand: it reads cookies, which only exist inside a Next.js request.
     const {buildGenerateRequestFromDb} = await import('./dig-server');
@@ -84,9 +86,11 @@ export async function generateSchedules(mockVariant?: string, rawInputs?: unknow
       return {kind: 'unavailable', message: 'The course catalog could not be loaded'};
     }
   }
+  // The request rides along so the route can work out walking details from the same edges the optimizer saw.
+  const withRequest = (out: GenerateOutcome): GenerateOutcome => (out.kind === 'ok' ? {...out, request: body} : out);
   if (process.env.DIGREE_MOCK === '1') {
     assertNoUserData(body);
-    return mockOutcome(mockVariant);
+    return withRequest(mockOutcome(mockVariant));
   }
-  return callOptimizer(body);
+  return withRequest(await callOptimizer(body));
 }

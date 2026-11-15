@@ -3,214 +3,232 @@
 import Link from 'next/link';
 import {useRouter, useSearchParams} from 'next/navigation';
 import {Suspense, useRef, useState} from 'react';
-import {EmptyState, Screen, field, iconButton, primary, secondary} from '@/components/screen';
-import {WeeklyTimetable} from '@/components/weekly-timetable';
-import {COURSES, bundleKey, currentTermOf, useBuildingNames, useBundlesFor, useCourseInfo, useTerms, type Meeting} from '@/lib/data/catalog';
-import {STATUS_LABEL, useCourseRecords} from '@/lib/data/course-records';
-import {deletePlannedSchedule, removePlannedCourse, usePlannedSchedule} from '@/lib/data/saved-schedules';
-import {byDayThenStart, minToLabel} from '@/lib/time';
+import {AvatarLink, EmptyNote, Frame, ICON, Svg, TabBar, Wordmark} from '@/components/dg';
+import {DayHeads, HourAxis, dayColumn, gridHours} from '@/components/week';
+import {bundleKey, currentTermOf, useBuildingNames, useBundlesFor, useCourseDetails, useTerms, type Meeting} from '@/lib/data/catalog';
+import {usePosts} from '@/lib/data/community';
+import {useCourseRecords} from '@/lib/data/course-records';
+import {removePlannedCourse, usePlannedSchedule} from '@/lib/data/saved-schedules';
+import {s} from '@/lib/ui/css';
+import {DAY_NAMES, WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
+import {TONES, useCourseTone, type Tone} from '@/lib/ui/palette';
 
-type Mode = 'planned' | 'enrolled';
-type Entry = {course_id: string; code: string; credits: number; section: string | null; meetings: Meeting[]; score: number | null; instructors: string[]};
+const CSS = `
+button{font:inherit}
+a{color:#8C1D2B}a:hover{color:#6F1622}
+@keyframes pop{0%{opacity:0;transform:translateY(14px) scale(.92)}100%{opacity:1;transform:none}}
+@keyframes fadeUp{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
+.press{transition:transform 160ms ease}
+.press:active{transform:scale(.94)}
+.dig:hover svg{animation:dig 600ms ease-in-out}
+@keyframes dig{0%,100%{transform:rotate(0)}30%{transform:rotate(-18deg) translateY(2px)}60%{transform:rotate(10deg) translateY(-1px)}}
+`;
 
-function CourseDetail({entry, back, editHref}: {entry: Entry; back: string; editHref?: string}) {
-  const score = entry.score;
-  const course = useCourseInfo(entry.course_id);
-  const buildings = useBuildingNames(entry.meetings.flatMap((meeting) => meeting.building_id ? [meeting.building_id] : []));
-  const row = 'flex justify-between gap-3 border-b border-neutral-200 py-2 text-sm';
-  return (
-    <Screen title={entry.code} description={course?.title ?? undefined} back={{href: back, label: 'Back to schedule'}}>
-      <section aria-label="Course detail" className="surface">
-      <dl>
-        <div className={row}>
-          <dt className="text-neutral-600">Credits</dt>
-          <dd>{entry.credits}</dd>
-        </div>
-        <div className={row}>
-          <dt className="text-neutral-600">Section</dt>
-          <dd>{entry.section ?? 'Unavailable'}</dd>
-        </div>
-        {[...entry.meetings].sort(byDayThenStart).map((m) => (
-          <div className={row} key={`${m.day}-${m.start_min}-${m.end_min}`}>
-            <dt className="text-neutral-600">{m.day}</dt>
-            <dd>
-              {minToLabel(m.start_min)}–{minToLabel(m.end_min)} · {m.building_id ? buildings[m.building_id] ?? m.building_id : m.mode === 'online_sync' ? 'Online' : 'Building unavailable'}
-            </dd>
-          </div>
-        ))}
-        <div className={row}>
-          <dt className="text-neutral-600">Instructor</dt>
-          <dd className="text-right">{entry.instructors.length ? entry.instructors.join(', ') : 'Unavailable'}</dd>
-        </div>
-        <div className={row}>
-          <dt className="text-neutral-600">Instructor rating</dt>
-          <dd>{score === null ? 'No rating' : `${Math.round(score * 100)}%`}</dd>
-        </div>
-      </dl>
-      {editHref && <Link href={editHref} className={`${secondary} mt-3 w-full`}>Edit course</Link>}
-      <Link href={`/community?course=${encodeURIComponent(entry.course_id)}`} className={`${secondary} mt-3 w-full`}>
-        Posts tagged {entry.code}
-      </Link>
-      </section>
-    </Screen>
-  );
-}
+const H = 52;
+type View = 'enrolled' | 'plans';
+type Entry = {course_id: string; code: string; name: string; credits: number; section: string; meetings: Meeting[]; tone: Tone};
+
+const TAB = 'height: 34px; padding: 0 14px; border: none; border-radius: 17px; font-size: 14px; cursor: pointer; ';
+const SHEET_ACTION = 'flex: 1; height: 48px; border: none; border-radius: 16px; background: #F1EEEA; color: #1D1B1A; font-size: 15px; font-weight: 800; text-decoration: none; display: flex; align-items: center; justify-content: center; cursor: pointer';
 
 // "/" is the Schedule tab: the default entry screen.
 function Schedule() {
   const params = useSearchParams();
   const router = useRouter();
-  const mode: Mode = params.get('view') === 'plans' ? 'planned' : 'enrolled';
-  const picked = params.get('course');
-  const [editing, setEditing] = useState(false);
-  const [error, setError] = useState(false);
+  const view: View = params.get('view') === 'plans' ? 'plans' : 'enrolled';
+  const [open, setOpen] = useState(false);
+  const [sel, setSel] = useState(0);
   const busy = useRef(false);
-  const records = useCourseRecords();
 
-  // Two separate lists. A plan and self-reported enrollment are never merged into one timetable.
   const terms = useTerms();
   const currentTerm = currentTermOf(terms);
-  const term = terms.find((t) => t.id === params.get('term'))?.id ?? currentTerm ?? terms.at(-1)?.id ?? '';
+  const term = terms.find((item) => item.id === params.get('term'))?.id ?? currentTerm ?? terms.at(-1)?.id ?? '';
+  const termLabel = terms.find((item) => item.id === term)?.label ?? '';
+  const records = useCourseRecords();
   const plan = usePlannedSchedule(term);
-  const mine = records.filter((r) => r.term === term && ['completed', 'enrolled_self_reported'].includes(r.status));
-  const sections = useBundlesFor([...mine, ...(plan?.selected ?? []).map((entry) => ({...entry, term}))]);
-  const scheduleUrl = (mode: Mode, term: string, course?: string) => {
+  const toneOf = useCourseTone();
+  const posts = usePosts();
+
+  // Two separate lists. A plan and self-reported enrollment are never merged into one timetable.
+  const mine = records.filter((record) => record.term === term && (record.status === 'enrolled_self_reported' || record.status === 'completed'));
+  const planned = plan?.selected ?? [];
+  const sections = useBundlesFor([...mine, ...planned.map((entry) => ({...entry, term}))]);
+  const details = useCourseDetails([...mine, ...planned].map((entry) => entry.course_id));
+  const entries: Entry[] = view === 'plans'
+    ? planned.map((entry, i) => ({
+      course_id: entry.course_id, code: entry.course_code, name: details[entry.course_id]?.title ?? entry.course_code, credits: entry.credits,
+      section: sections[bundleKey({...entry, term})]?.label ?? entry.bundle_id, meetings: entry.meetings, tone: TONES[i % TONES.length],
+    }))
+    : mine.map((record, i) => {
+      const section = sections[bundleKey(record)];
+      const code = record.course_code ?? details[record.course_id]?.code ?? record.course_id;
+      return {
+        course_id: record.course_id, code, name: details[record.course_id]?.title ?? code, credits: record.credits,
+        section: section?.label ?? record.bundle_id ?? '—', meetings: section?.meetings ?? [], tone: term === currentTerm ? toneOf(record.course_id) : TONES[i % TONES.length],
+      };
+    });
+  const buildings = useBuildingNames(entries.flatMap((entry) => entry.meetings.flatMap((meeting) => (meeting.building_id ? [meeting.building_id] : []))));
+  const place = (meeting: Meeting) => (meeting.building_id ? buildings[meeting.building_id] ?? meeting.building_id : meeting.mode === 'online_sync' ? 'Online' : '');
+
+  const url = (nextView: View, nextTerm: string) => {
     const query = new URLSearchParams();
-    if (term) query.set('term', term);
-    if (mode === 'planned') query.set('view', 'plans');
-    if (course) query.set('course', course);
+    if (nextTerm && nextTerm !== currentTerm) query.set('term', nextTerm);
+    if (nextView === 'plans') query.set('view', 'plans');
     return query.size ? `/?${query}` : '/';
   };
-  const back = scheduleUrl(mode, term);
-  const add = `/schedule/courses?${new URLSearchParams({term, view: mode === 'planned' ? 'plans' : 'courses'})}`;
+  const go = (nextView: View, nextTerm: string) => {
+    setOpen(false);
+    router.replace(url(nextView, nextTerm), {scroll: false});
+  };
 
-  const planned: Entry[] = (plan?.selected ?? []).map((s) => {
-    const section = sections[bundleKey({...s, term})];
-    return {course_id: s.course_id, code: s.course_code, credits: s.credits, section: section?.label ?? s.bundle_id, meetings: s.meetings, score: section?.instructor_score ?? null, instructors: section?.instructors ?? []};
-  });
-  const enrolled: Entry[] = mine.map((r) => ({
-    course_id: r.course_id,
-    code: r.course_code ?? COURSES.find((c) => c.id === r.course_id)?.code ?? r.course_id,
-    credits: r.credits,
-    section: sections[bundleKey(r)]?.label ?? r.bundle_id,
-    meetings: sections[bundleKey(r)]?.meetings ?? [],
-    score: sections[bundleKey(r)]?.instructor_score ?? null,
-    instructors: sections[bundleKey(r)]?.instructors ?? [],
+  const onGrid = (meeting: Meeting) => (WEEKDAYS as string[]).includes(meeting.day);
+  const {start, end} = gridHours(entries.flatMap((entry) => entry.meetings.filter(onGrid)));
+  const offGrid = entries.map((entry, index) => ({entry, index})).filter(({entry}) => !entry.meetings.some(onGrid));
+  const days = WEEKDAYS.map((day, d) => ({
+    day,
+    blocks: entries.flatMap((entry, index) => entry.meetings.filter((meeting) => meeting.day === day).map((meeting) => ({entry, index, meeting, name: DAY_NAMES[d]}))),
   }));
-  const entries = mode === 'planned' ? planned : enrolled;
-  const timed = entries.filter((e) => e.meetings.length > 0);
-  const detail = entries.find((e) => e.course_id === picked);
-  async function editPlan(courseId?: string) {
-    if (!plan || busy.current) return;
+  const drawn = days.flatMap((day) => day.blocks); // blocks pop in one after another, in this order
+  const c = entries[Math.min(sel, entries.length - 1)];
+  const selected = c ? entries.indexOf(c) : -1;
+  const postCount = c ? posts.filter((post) => post.course_id === c.course_id && !post.reported).length : 0;
+  const query = `term=${encodeURIComponent(term)}`;
+
+  async function removeFromPlan() {
+    if (!plan || !c || busy.current) return;
     busy.current = true;
-    setEditing(true);
-    setError(false);
     try {
-      if (courseId) await removePlannedCourse(plan, courseId);
-      else await deletePlannedSchedule(plan);
-    } catch {
-      setError(true);
+      await removePlannedCourse(plan, c.course_id);
+      setOpen(false);
+    } catch (error) {
+      console.error('Updating the plan failed', error);
     } finally {
       busy.current = false;
-      setEditing(false);
     }
   }
-  const tab = (m: Mode, label: string) => (
-    <Link
-      href={scheduleUrl(m, term)}
-      aria-current={mode === m ? 'true' : undefined}
-      className="min-h-10 rounded-full px-3.5 py-1.5 text-sm font-extrabold text-neutral-600 aria-[current=true]:bg-neutral-900 aria-[current=true]:text-white"
-    >
-      {label}
-    </Link>
-  );
 
-  if (detail) return <CourseDetail entry={detail} back={back} editHref={mode === 'enrolled' ? `${add}&course=${encodeURIComponent(detail.course_id)}` : undefined} />;
   return (
-    <Screen title="My schedule" home actions={
-      <Link href="/friends" aria-label="Friends" className={iconButton}>
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-          <circle cx="9" cy="7" r="4" /><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-        </svg>
-      </Link>
-    }>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <select aria-label="Schedule semester" className={`${field} mt-0 max-w-64 text-lg`} value={term} onChange={(event) => router.push(scheduleUrl(mode, event.target.value))} disabled={!terms.length}>
-          {!terms.length && <option value="">Loading semesters…</option>}
-          {terms.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-        </select>
-        <Link href={add} aria-label="Add course" className={`${iconButton} bg-neutral-100 hover:bg-neutral-200`}>
-          <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-        </Link>
-      </div>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-1">
-        <nav aria-label="Schedule type" className="flex gap-1">
-          {tab('enrolled', term === currentTerm ? STATUS_LABEL.enrolled_self_reported : 'My courses')}
-          {tab('planned', 'Plans')}
-        </nav>
-        {!!entries.length && <p className="px-1 text-sm font-bold text-neutral-600">{entries.reduce((total, entry) => total + entry.credits, 0)} cr</p>}
-      </div>
-      <p className="mb-4 px-1 text-xs text-neutral-600">
-        {mode === 'planned' ? 'Planned only. Not a registration.' : 'Based on the courses you enter yourself.'}
-      </p>
-
-      {entries.length === 0 &&
-        (mode === 'planned' ? (
-          <>
-            <EmptyState title="No plan saved" body="Generate schedules in DIG and save one here." />
-            <Link href={term ? `/dig?term=${encodeURIComponent(term)}` : '/dig'} className={primary}>
-              Generate a plan
+    <Frame css={CSS} numeric>
+      <header style={s('flex-shrink: 0; padding: 12px 20px 0; display: flex; flex-direction: column; gap: 14px; animation: fadeUp 420ms ease both')}>
+        <div style={s('display: flex; align-items: center; justify-content: space-between; height: 44px')}>
+          <Wordmark style="font-size: 26px; font-weight: 900; letter-spacing: -0.02em; line-height: 1" />
+          <div style={s('display: flex; align-items: center; gap: 2px')}>
+            <Link href="/friends" className="press" aria-label="Friends" style={s('width: 44px; height: 44px; color: #1D1B1A; display: flex; align-items: center; justify-content: center; border-radius: 22px; text-decoration: none')}>
+              <Svg size={22} sw={2.2}>{ICON.friends}</Svg>
             </Link>
-          </>
-        ) : (
-          <>
-            <EmptyState title="No courses for this semester" body="Add your courses to see them here." />
-            <Link href={add} className={`${secondary} w-full`}>
-              Add courses
-            </Link>
-            <Link href="/dig" className={`${primary} mt-2`}>Generate a plan</Link>
-          </>
-        ))}
+            <AvatarLink press />
+          </div>
+        </div>
 
-      {timed.length > 0 && <WeeklyTimetable items={timed.map((e) => ({label: e.code, meetings: e.meetings}))} onSelect={(i) => router.push(scheduleUrl(mode, term, timed[i].course_id))} />}
+        <div style={s('display: flex; align-items: center; justify-content: space-between')}>
+          <label style={s('position: relative; border: none; background: transparent; padding: 0; display: flex; align-items: center; gap: 4px; color: #1D1B1A; cursor: pointer; min-height: 44px')}>
+            <span style={s('font-size: 32px; font-weight: 900; letter-spacing: -0.02em')}>{termLabel || ' '}</span>
+            <Svg size={22} sw={2.6} stroke="#6E6863">{ICON.down}</Svg>
+            <select className="dg-native" aria-label={`Change semester, currently ${termLabel}`} value={term} onChange={(event) => go(view, event.target.value)} disabled={!terms.length}>
+              {[...terms].reverse().map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+          </label>
+          <Link href={`/schedule/add?${query}`} className="press" aria-label="Add course" style={s('width: 44px; height: 44px; border-radius: 22px; background: #ECE8E3; color: #1D1B1A; display: flex; align-items: center; justify-content: center; text-decoration: none')}>
+            <Svg size={20} sw={2.6} join={false}>{ICON.plus}</Svg>
+          </Link>
+        </div>
 
-      {entries.length > 0 && (
-        <ul className="surface mt-3 py-1">
-          {entries.map((e) => (
-            <li key={e.course_id} className="flex items-center justify-between gap-2 border-b border-neutral-200 py-2.5 text-sm last:border-0">
-              <Link href={scheduleUrl(mode, term, e.course_id)} className="text-left focus-visible:outline-2 focus-visible:outline-accent">
-                <span className="font-semibold">{e.code}</span>
-                <span className="text-neutral-600">
-                  {' '}
-                  · {e.credits} cr · {e.meetings.length ? e.section : 'meeting time unknown'}
-                </span>
-              </Link>
-              {mode === 'planned' && (
-                <button type="button" disabled={editing} aria-label={`Remove ${e.code}`} onClick={() => editPlan(e.course_id)} className="text-accent focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50">
-                  Remove
-                </button>
-              )}
-            </li>
+        <div style={s('display: flex; align-items: center; justify-content: space-between')}>
+          <div role="tablist" aria-label="Schedule view" style={s('display: flex; gap: 6px')}>
+            <button type="button" role="tab" aria-selected={view === 'enrolled'} onClick={() => go('enrolled', term)} style={s(TAB + (view === 'enrolled' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Enrolled</button>
+            <button type="button" role="tab" aria-selected={view === 'plans'} onClick={() => go('plans', term)} style={s(TAB + (view === 'plans' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Plans · {plan ? 1 : 0}</button>
+          </div>
+          <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{plural(entries.reduce((total, entry) => total + entry.credits, 0), 'credit')}</span>
+        </div>
+      </header>
+
+      <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 14px 14px 12px 6px')}>
+        <DayHeads />
+        <div style={s('display: flex')}>
+          <HourAxis start={start} end={end} H={H} />
+          {days.map(({day, blocks}) => (
+            <div key={day} style={s(dayColumn(end - start, H))}>
+              {blocks.map((block) => {
+                const {entry, index, meeting, name} = block;
+                const on = open && selected === index;
+                const position = drawn.indexOf(block);
+                return (
+                  <button
+                    key={`${view}-${term}-${entry.course_id}-${meeting.start_min}`}
+                    type="button"
+                    aria-label={`${entry.code}, ${name}${place(meeting) ? `, ${place(meeting)}` : ''}`}
+                    onClick={() => {
+                      setSel(index);
+                      setOpen(true);
+                    }}
+                    style={s(`position: absolute; left: 3px; right: 3px; top: ${(meeting.start_min / 60 - start) * H}px; height: ${((meeting.end_min - meeting.start_min) / 60) * H - 3}px; box-sizing: border-box; padding: 6px 7px; border: none; border-radius: 12px; background: ${entry.tone.bg}; color: ${entry.tone.fg}; text-align: left; overflow: hidden; cursor: pointer; font-family: inherit; animation: pop 520ms cubic-bezier(.2,.9,.25,1.2) both; animation-delay: ${120 + position * 45}ms; transition: transform 200ms ease, box-shadow 200ms ease; ${on ? `transform: scale(1.04); box-shadow: 0 0 0 2.5px ${entry.tone.fg}, 0 6px 16px rgba(0,0,0,0.12)` : ''}`)}
+                  >
+                    <span style={s('display: block; font-size: 12px; font-weight: 900; line-height: 1.2')}>{shortCode(entry.code)}</span>
+                    <span style={s('display: block; font-size: 11px; font-weight: 600; line-height: 1.25; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{shortPlace(place(meeting))}</span>
+                  </button>
+                );
+              })}
+            </div>
           ))}
-        </ul>
-      )}
+        </div>
+        {offGrid.length > 0 && (
+          <div style={s('display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 0 0 30px')}>
+            {offGrid.map(({entry, index}) => (
+              <button
+                key={entry.course_id}
+                type="button"
+                aria-label={`${entry.code}, no weekday meeting time`}
+                onClick={() => {
+                  setSel(index);
+                  setOpen(true);
+                }}
+                style={s(`box-sizing: border-box; padding: 6px 9px; border: none; border-radius: 12px; background: ${entry.tone.bg}; color: ${entry.tone.fg}; text-align: left; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 900; line-height: 1.2`)}
+              >
+                {shortCode(entry.code)}
+              </button>
+            ))}
+          </div>
+        )}
+        {terms.length > 0 && entries.length === 0 && (
+          <EmptyNote>{view === 'plans' ? `No plan for ${termLabel} yet. Tap DIG to dig one up.` : `No courses for ${termLabel} yet. Tap + to add one.`}</EmptyNote>
+        )}
+      </main>
 
-      {mode === 'planned' && planned.length > 0 && (
-        <button type="button" disabled={editing} onClick={() => editPlan()} className={`${secondary} mt-3 w-full`}>
-          Delete plan
-        </button>
-      )}
-      {mode === 'planned' && error && <p role="alert" className="mt-2 text-sm text-accent">Couldn’t update the plan. Try again.</p>}
-      {mode === 'enrolled' && enrolled.length > 0 && (
-        <Link href={add} className={`${secondary} mt-3 w-full`}>
-          Edit courses
-        </Link>
-      )}
+      <TabBar active="schedule" digHover />
 
-    </Screen>
+      <div aria-hidden="true" onClick={() => setOpen(false)} style={s(`position: absolute; inset: 0; z-index: 20; background: rgba(29,27,26,0.32); transition: opacity 300ms ease; ${open ? 'opacity: 1; pointer-events: auto' : 'opacity: 0; pointer-events: none'}`)} />
+      {c && (
+        <section role="dialog" aria-label="Course detail" aria-hidden={!open} style={s(`position: absolute; left: 0; right: 0; bottom: 0; z-index: 21; box-sizing: border-box; padding: 10px 20px 28px; background: #FFFFFF; border-radius: 28px 28px 0 0; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 -10px 40px rgba(0,0,0,0.12); transition: transform 420ms cubic-bezier(.2,.9,.25,1.05), visibility 420ms; transform: ${open ? 'translateY(0)' : 'translateY(105%)'}; visibility: ${open ? 'visible' : 'hidden'}`)}>
+          <span aria-hidden="true" style={s('align-self: center; width: 40px; height: 5px; border-radius: 3px; background: #DDD8D2')} />
+          <div style={s('display: flex; align-items: flex-start; justify-content: space-between; gap: 12px')}>
+            <div style={s('display: flex; flex-direction: column; gap: 4px')}>
+              <span style={s(`align-self: flex-start; height: 26px; padding: 0 10px; border-radius: 13px; background: ${c.tone.bg}; color: ${c.tone.fg}; font-size: 13px; font-weight: 900; display: inline-flex; align-items: center`)}>{c.code}</span>
+              <h2 style={s('margin: 0; font-size: 22px; font-weight: 900; line-height: 1.2')}>{c.name}</h2>
+            </div>
+            <button type="button" className="press" aria-label="Close" onClick={() => setOpen(false)} style={s('flex-shrink: 0; width: 40px; height: 40px; border: none; border-radius: 20px; background: #F1EEEA; color: #1D1B1A; display: flex; align-items: center; justify-content: center; cursor: pointer')}>
+              <Svg size={18} sw={2.6} join={false}>{ICON.x}</Svg>
+            </button>
+          </div>
+          <div style={s('display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px')}>
+            <div style={s('padding: 12px 14px; border-radius: 16px; background: #F7F5F2; display: flex; flex-direction: column; gap: 2px')}><span style={s('font-size: 12px; font-weight: 700; color: #5F5A55')}>Credits</span><span style={s('font-size: 18px; font-weight: 900')}>{c.credits}</span></div>
+            <div style={s('padding: 12px 14px; border-radius: 16px; background: #F7F5F2; display: flex; flex-direction: column; gap: 2px')}><span style={s('font-size: 12px; font-weight: 700; color: #5F5A55')}>Section</span><span style={s('font-size: 18px; font-weight: 900')}>{c.section}</span></div>
+          </div>
+          <div style={s('display: flex; flex-direction: column; gap: 10px; font-size: 15px; font-weight: 600')}>
+            <span style={s('display: flex; align-items: center; gap: 10px')}><Svg size={18} sw={2.2} stroke="#6E6863">{ICON.clock}</Svg>{c.meetings.length ? meetingSummary(c.meetings) : 'No set meeting time'}</span>
+            <span style={s('display: flex; align-items: center; gap: 10px')}><Svg size={18} sw={2.2} stroke="#6E6863">{ICON.pin}</Svg>{[...new Set(c.meetings.map(place).filter(Boolean))].join(', ') || 'Location not listed'}</span>
+          </div>
+          <div style={s('display: flex; gap: 8px; margin-top: 2px')}>
+            <Link href={`/course/${encodeURIComponent(c.course_id)}?${query}${view === 'plans' ? '&view=plans' : ''}`} className="press" style={s(SHEET_ACTION)}>Details · {plural(postCount, 'post')}</Link>
+            {view === 'plans'
+              ? <button type="button" className="press" onClick={() => void removeFromPlan()} style={s(SHEET_ACTION)}>Remove from plan</button>
+              : <Link href={`/schedule/add?${query}&course=${encodeURIComponent(c.course_id)}`} className="press" style={s(SHEET_ACTION)}>Change section</Link>}
+          </div>
+        </section>
+      )}
+    </Frame>
   );
 }
 
 export default function SchedulePage() {
-  return <Suspense fallback={<Screen title="My schedule" home><p role="status">Loading schedule…</p></Screen>}><Schedule /></Suspense>;
+  return <Suspense fallback={<Frame css={CSS} numeric><span /></Frame>}><Schedule /></Suspense>;
 }

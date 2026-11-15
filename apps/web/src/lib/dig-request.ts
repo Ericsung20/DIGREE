@@ -7,22 +7,9 @@ type S = components['schemas'];
 export type GenerateRequest = S['GenerateRequest'];
 type Day = S['Day'];
 
-/** What the DIG form starts with. `sample` is true when results come from the shared fixture. */
-export type DigDefaults = {
-  term: string;
-  termLabel: string;
-  terms: {id: string; label: string}[];
-  minCredits: number;
-  maxCredits: number;
-  earliest: number;
-  latest: number;
-  courses: {id: string; code: string; credits: string; required: boolean}[];
-  sample: boolean;
-  hasSections?: boolean;
-};
-
-export type DigPreference = 'balanced' | 'walking' | 'days';
-export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]; preference?: DigPreference; related?: boolean};
+export type DigPrefer = 'walks' | 'lunch' | 'days';
+const PREFER: DigPrefer[] = ['walks', 'lunch', 'days'];
+export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]; prefer?: DigPrefer[]; preferredBreadths?: string[]; related?: boolean};
 
 const int = (v: unknown, min: number, max: number): number | null => {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
@@ -45,15 +32,19 @@ export function parseDigInputs(raw: unknown): DigInputs | {error: string} {
   if (minCredits > maxCredits) return {error: "Minimum credits can't exceed maximum."};
   if (earliest === null || latest === null || earliest >= latest) return {error: 'Earliest start must be before latest end.'};
   if (!required || !blocked || !blocked.every((d) => (DAYS as string[]).includes(d))) return {error: 'Invalid course or day selection.'};
-  const preference = r.preference;
-  if (preference !== undefined && preference !== 'balanced' && preference !== 'walking' && preference !== 'days') return {error: 'Choose a valid scheduling preference.'};
+  const prefer = r.prefer === undefined ? undefined : strings(r.prefer);
+  if (prefer === null || prefer?.some((p) => !(PREFER as string[]).includes(p))) return {error: 'Choose a valid scheduling preference.'};
+  const preferredBreadths = r.preferred_breadths === undefined ? undefined : strings(r.preferred_breadths);
+  if (preferredBreadths === null || (preferredBreadths && (preferredBreadths.length > 16 || preferredBreadths.some((code) => !code.trim())))) return {error: 'Choose valid breadth preferences.'};
   return {term: r.term, minCredits, maxCredits, required, earliest, latest, blockedDays: blocked as Day[],
-    ...(preference !== undefined ? {preference} : {}), ...(r.related === true ? {related: true} : {})};
+    ...(prefer !== undefined ? {prefer: prefer as DigPrefer[]} : {}),
+    ...(preferredBreadths !== undefined ? {preferredBreadths: [...new Set(preferredBreadths.map((code) => code.trim().toUpperCase()))]} : {}),
+    ...(r.related === true ? {related: true} : {})};
 }
 
 /** Catalog rows for the candidate courses, as read from the database. */
 export type CatalogRows = {
-  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; eligibility?: S['CandidateCourse']['eligibility_status']}[];
+  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; breadth?: string[] | null; eligibility?: S['CandidateCourse']['eligibility_status']}[];
   bundles: {course_id: string; bundle_id: string; seat_status: S['SectionBundle']['seat_status']; instructor_score: number | null}[];
   meetings: {course_id: string; bundle_id: string; day: Day; start_min: number; end_min: number; mode: S['Mode']; building_id: string | null}[];
   stats: {course_id: string; a_ab_rate: number; sample_size: number}[];
@@ -61,6 +52,16 @@ export type CatalogRows = {
   /** Ids of courses the user has marked completed. Only the boolean derived from this is sent. */
   completedCourseIds: string[];
 };
+
+/**
+ * Preference chips to optimizer weights. The contract keeps every weight between 0 and 1.
+ * "Short walks" and "Fewer days" raise their own weight. The optimizer has no lunch-break rule, so
+ * "Lunch break" only stops it from penalizing a midday gap; the result cards flag days without one.
+ */
+export function weightsFor(prefer: DigPrefer[], preferredBreadths: string[] = []): S['Weights'] {
+  return {walking: prefer.includes('walks') ? 1 : 0.4, idle_gap: prefer.includes('lunch') ? 0.1 : 0.4, campus_days: prefer.includes('days') ? 1 : 0.4, grade_outcomes: 0, degree_fit: 0, instructor: 0,
+    ...(preferredBreadths.length ? {breadth: 1} : {})};
+}
 
 /**
  * Builds the optimizer request. Nothing about the user is included: no id, email, grades or DARS data.
@@ -83,7 +84,7 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
       max_walk_per_transition_min: null,
       exclude_full_sections: false,
     },
-    preferences: {weights: {walking: inputs.preference === 'walking' ? 3 : 1, idle_gap: 1, campus_days: inputs.preference === 'days' ? 3 : 1, grade_outcomes: 0, degree_fit: 0, instructor: 0}},
+    preferences: {weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths), ...(inputs.preferredBreadths?.length ? {preferred_breadths: inputs.preferredBreadths} : {})},
     courses: rows.courses.map((c) => {
       const stat = rows.stats.find((s) => s.course_id === c.id);
       return {
@@ -95,6 +96,7 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
         already_completed: rows.completedCourseIds.includes(c.id),
         repeatable: c.repeatable,
         requirement_fit: null,
+        breadth: c.breadth ?? null,
         grade_stats: stat ? {a_ab_rate: Number(stat.a_ab_rate), sample_size: stat.sample_size} : null,
         section_bundles: rows.bundles
           .filter((b) => b.course_id === c.id)

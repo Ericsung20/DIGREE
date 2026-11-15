@@ -95,6 +95,8 @@ class _ScoringPlan:
     grade: DataFactor | None  # None: not compared
     degree_fit: DataFactor | None
     instructor: DataFactor | None
+    breadth: DataFactor | None
+    preferred_breadths: frozenset[str]
     notices: dict[str, str]  # advisory warnings every result carries, by code
 
 
@@ -127,7 +129,7 @@ def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) ->
     usable = _usable_optional_courses(request) if optional_needed else []
     pool = usable[: limits.max_optional_courses]
 
-    plan = _scoring_plan(request.preferences.weights, required, [course for _, course in usable])
+    plan = _scoring_plan(request.preferences.weights, required, [course for _, course in usable], request.preferences.preferred_breadths)
     search = _Search(request, pool, plan, limits.max_search_steps)
     search.run()
 
@@ -195,7 +197,7 @@ def _optional_courses_needed(request: GenerateRequest, required: list[CandidateC
 
 
 def _usable_optional_courses(request: GenerateRequest) -> list[tuple[int, CandidateCourse]]:
-    """H8 for optional courses, as (request index, course), best degree fit first.
+    """H8 for optional courses, as (request index, course), breadth then degree fit.
 
     Ties go to the lower course_id, so neither the shortlist nor the search
     order depends on how the request happens to list the courses.
@@ -208,9 +210,12 @@ def _usable_optional_courses(request: GenerateRequest) -> list[tuple[int, Candid
         and not (course.already_completed and not course.repeatable)
         and course.section_bundles
     ]
+    preferred = {code.strip().casefold() for code in request.preferences.preferred_breadths}
+    favor_breadth = bool(preferred and request.preferences.weights.breadth > 0)
     return sorted(
         usable,
         key=lambda item: (
+            not bool(preferred.intersection(code.strip().casefold() for code in item[1].breadth or [])) if favor_breadth else False,
             item[1].requirement_fit is None,
             -(item[1].requirement_fit or 0),
             item[1].course_id,
@@ -219,7 +224,7 @@ def _usable_optional_courses(request: GenerateRequest) -> list[tuple[int, Candid
 
 
 def _scoring_plan(
-    weights: Weights, required: list[CandidateCourse], optional: list[CandidateCourse]
+    weights: Weights, required: list[CandidateCourse], optional: list[CandidateCourse], preferred_breadths: list[str]
 ) -> _ScoringPlan:
     """Decide from the request alone which data-driven factors can be compared.
 
@@ -229,7 +234,8 @@ def _scoring_plan(
     play.
     """
     notices: dict[str, str] = {}
-    grade = degree_fit = instructor = None
+    grade = degree_fit = instructor = breadth = None
+    preferred = frozenset(code.strip().casefold() for code in preferred_breadths)
 
     if optional and weights.grade_outcomes > 0:
         factor = data_factor(
@@ -246,6 +252,16 @@ def _scoring_plan(
             notices["degree_fit_data_missing"] = messages.degree_fit_data_unavailable()
         elif factor.discriminating:
             degree_fit = factor
+
+    if optional and preferred and weights.breadth > 0:
+        factor = data_factor(
+            float(bool(preferred.intersection(code.strip().casefold() for code in c.breadth)))
+            for c in optional if c.breadth is not None
+        )
+        if not factor.has_data:
+            notices["breadth_data_missing"] = messages.breadth_data_unavailable()
+        elif factor.discriminating:
+            breadth = factor
 
     if weights.instructor > 0:
         factor = data_factor(
@@ -275,10 +291,10 @@ def _scoring_plan(
             instructor = factor
 
     compared = [name for name in SHAPE_FACTORS if getattr(weights, name) > 0]
-    if not compared and grade is None and degree_fit is None and instructor is None:
+    if not compared and grade is None and degree_fit is None and instructor is None and breadth is None:
         notices["score_not_comparable"] = messages.score_not_comparable()
 
-    return _ScoringPlan(weights, grade, degree_fit, instructor, notices)
+    return _ScoringPlan(weights, grade, degree_fit, instructor, breadth, preferred, notices)
 
 
 class _Search:
@@ -300,7 +316,7 @@ class _Search:
             if course.is_required
         ]
         # Required courses first, fewest bundles first, ties in request order.
-        # Then the optional pool in its own order (best degree fit first).
+        # Then the optional pool in its own order (preferred breadth, then degree fit).
         required.sort(key=lambda s: (len(s.course.section_bundles), s.request_index))
         self._slots = required + [self._slot(index, course) for index, course in pool]
 
@@ -529,6 +545,13 @@ class _Search:
             missing = [c.course.course_code for c, fit in zip(optional, fits) if fit is None]
             if missing:
                 advisories["degree_fit_data_missing"] = messages.degree_fit_data_missing(missing)
+
+        if plan.breadth is not None:
+            matches = [None if c.course.breadth is None else float(bool(plan.preferred_breadths.intersection(code.strip().casefold() for code in c.course.breadth))) for c in optional]
+            values["breadth"] = filled_mean(matches, plan.breadth.neutral)
+            missing = [c.course.course_code for c, match in zip(optional, matches) if match is None]
+            if missing:
+                advisories["breadth_data_missing"] = messages.breadth_data_missing(missing)
 
         if plan.instructor is not None:
             ratings = [c.bundle.instructor_score for c in choices]

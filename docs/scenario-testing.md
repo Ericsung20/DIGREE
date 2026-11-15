@@ -2,6 +2,8 @@
 
 Chromium used the Next.js app with local Supabase Auth and Postgres, and the Python Optimizer over HTTP. Scheduling used three synthetic 3-credit Monday sections. The instructor check used the public UW Fall 2026 sections for COMP SCI 300.
 
+The design comparison and observed results below record the scenario-testing branch before the UI merge. The merged app uses separate DIG setup, results, and preview pages. It keeps DARS entries under the same DARS tab alongside the PDF comparison, and supports attaching or clearing a section for a completed course through Schedule.
+
 ## Design reference
 
 Use the attached `DIGREE.html` board export for screen order, actions, and display states. Its 26 boards include the logo and four variations of Recommendations. Mobile boards are 390 × 844. The course codes, people, counts, grades, and DARS differences in the prototype are examples. Exercise equivalent states with local records and use the selected user, term, course, and section to verify where each displayed value comes from.

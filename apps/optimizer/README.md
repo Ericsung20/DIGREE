@@ -75,7 +75,7 @@ Without the virtual environment, `python3 scripts/smoke.py` works too. To test a
 |---|---|---|
 | Liveness | `GET /health` | 200, `{"status": "ok", "contract_version": "1.0"}` |
 | Baseline | `fixtures/request.json` | 200, body equal to `fixtures/expected.json` as parsed JSON |
-| Invalid request | the fixture with all six weights set to 0 | 422, `error.code` is `validation_error` |
+| Invalid request | the fixture with all supplied weights set to 0 | 422, `error.code` is `validation_error` |
 | No feasible schedule | the fixture with `constraints.earliest_start_min` set to 700 | 200, `results: []`, `no_results_reasons: ["outside_time_window"]` |
 | Unknown data | the fixture with `courses[0].section_bundles[0].seat_status` set to `"unknown"` | 200, statuses `ready`, `needs_review`, `needs_review`, each flagged result with a `seat_status_unknown` warning |
 
@@ -150,7 +150,7 @@ Beyond the OpenAPI schema, these are rejected with 422:
 - `min_credits` greater than `max_credits`
 - duplicate `course_id`, or duplicate `bundle_id` within one course
 - duplicate entries in `blocked_days`
-- all six weights equal to 0
+- all weights, including optional `breadth`, equal to 0
 - two walking edges that give different minutes for the same directed pair, or a non-zero walking time from a building to itself
 - unknown fields, and values of the wrong JSON type (`"10"` or `10.0` where an integer is required)
 
@@ -159,6 +159,8 @@ Beyond the OpenAPI schema, these are rejected with 422:
 Every schedule holds **all required courses**, each with one section bundle and one credit option.
 
 **Optional courses** (`is_required: false`) are added only when the required courses cannot reach the credit range on their own, that is, when no combination of their credit options lands inside `min_credits..max_credits`. Then every set of usable optional courses whose total lands inside the range is a candidate: with 9 required credits and a 12-18 range, schedules of 12, 15 and 18 credits are all eligible. When the required courses already fit the range, optional courses are not considered at all.
+
+When `preferred_breadths` and a positive `weights.breadth` are supplied, matching optional courses get priority in the bounded candidate pool and a higher score. Other breadths remain eligible. The caller sends the catalog's `breadth` codes on each candidate course; null means the codes are unknown.
 
 An optional course is usable unless it is `ineligible`, `already_completed` and not `repeatable`, or has no section bundles. One with `eligibility_status: unknown` is usable, and a schedule containing it is `needs_review`.
 
@@ -224,6 +226,7 @@ Every warning is one string, `<code>: <message>`. Split on the first `": "` to g
 |---|---|
 | `grade_data_missing` | A selected optional course has no grade statistics and took a neutral value; or no optional course has any, and the grade weight was not applied |
 | `degree_fit_data_missing` | The same, for `requirement_fit` |
+| `breadth_data_missing` | The same, for optional courses with unknown breadth codes |
 | `instructor_data_missing` | A selected section has no instructor rating and took a neutral value; or no section has one, and the instructor weight was not applied |
 | `score_not_comparable` | No weighted factor can tell the schedules apart; every score is 50 and the order follows IDs |
 | `search_incomplete` | The search stopped at a limit; better schedules may exist |
@@ -259,6 +262,7 @@ When a schedule has unchecked transitions, both walking figures are **subtotals 
 | `grade_outcomes` | `grade_stats` | mean smoothed A/AB rate of the selected **optional** courses |
 | `degree_fit` | `requirement_fit` | mean over the selected **optional** courses |
 | `instructor` | `instructor_score` | mean over **every** selected section |
+| `breadth` | `CandidateCourse.breadth` and `Preferences.preferred_breadths` | mean match rate among selected **optional** courses; nonmatching courses remain eligible |
 
 **Grade smoothing.** A course's rate is `(n * a_ab_rate + 25) / (n + 50)` with `n = sample_size`: each course is treated as if it came with 50 extra grades at a 50% rate. Two grades at 100% give 0.52; 400 grades at 80% give 0.77. `grade_stats: null` and `sample_size: 0` both count as no data. This is an MVP rule, not a university statistic, and says nothing certain about the grade a student will get.
 
@@ -268,7 +272,7 @@ When a schedule has unchecked transitions, both walking figures are **subtotals 
 
 - the request has no data for it at all (an advisory warning says the weight was not applied);
 - fewer than two different values are known, so every schedule would get the same value;
-- for `grade_outcomes` and `degree_fit`, no optional course is in play;
+- for `grade_outcomes`, `degree_fit` and `breadth`, no optional course is in play;
 - for `instructor` when the courses are fixed, no course has two sections with different ratings.
 
 The three shape factors are always compared. If nothing is left to compare, every schedule scores 50 with a `score_not_comparable` warning.
@@ -294,7 +298,7 @@ The limits of this rule: 0.5 is a placeholder, not an estimate. It corresponds t
 
 ## Search
 
-The search is one depth-first pass: required courses first (fewest sections first, ties in request order), then the optional pool (highest `requirement_fit` first, missing values last, ties by `course_id`). For each optional course it tries every section and credit option, then leaving the course out.
+The search is one depth-first pass: required courses first (fewest sections first, ties in request order), then the optional pool (preferred breadth first when selected, then highest `requirement_fit`, missing values last, ties by `course_id`). For each optional course it tries every section and credit option, then leaving the course out.
 
 Branches are cut as early as possible: when the credits already chosen plus the least still to come exceed the maximum, when even everything still available cannot reach the minimum, when a section breaks a rule on its own, or when it overlaps a section already chosen. Walking is judged only on complete schedules, because two classes that are neighbours in a partial schedule may not stay neighbours.
 

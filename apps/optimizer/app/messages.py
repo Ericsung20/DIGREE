@@ -44,6 +44,7 @@ REVIEW_WARNING_CODES = (
 ADVISORY_WARNING_CODES = (
     "grade_data_missing",
     "degree_fit_data_missing",
+    "breadth_data_missing",
     "instructor_data_missing",
     "score_not_comparable",
     "search_incomplete",
@@ -129,6 +130,20 @@ def degree_fit_data_unavailable() -> str:
     return (
         "degree_fit_data_missing: No degree-fit values were provided for the optional courses; "
         "the degree-fit preference did not affect the score."
+    )
+
+
+def breadth_data_missing(course_codes: list[str]) -> str:
+    return (
+        f"breadth_data_missing: No breadth codes for {', '.join(course_codes)}; "
+        "a neutral value was used for the breadth preference."
+    )
+
+
+def breadth_data_unavailable() -> str:
+    return (
+        "breadth_data_missing: No breadth codes were provided for the optional courses; "
+        "the breadth preference did not affect the score."
     )
 
 

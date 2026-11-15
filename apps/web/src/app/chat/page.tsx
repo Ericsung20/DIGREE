@@ -1,45 +1,68 @@
 'use client';
 
 import Link from 'next/link';
-import {Chevron, EmptyState, Screen, secondary} from '@/components/screen';
-import {useChatRooms} from '@/lib/data/chat-live';
+import {useState} from 'react';
+import {AvatarLink, EmptyNote, Frame, TabBar} from '@/components/dg';
+import {nickname, useChatRooms, useRoomPreviews} from '@/lib/data/chat-live';
 import {useCourseRecords} from '@/lib/data/course-records';
+import {s} from '@/lib/ui/css';
+import {courseNumber, plural, stamp} from '@/lib/ui/format';
+import {useCourseTone} from '@/lib/ui/palette';
 
-const roomColors = ['bg-emerald-100 text-emerald-900', 'bg-sky-100 text-sky-900', 'bg-violet-100 text-violet-900', 'bg-amber-100 text-amber-900'];
+const CSS = `
+a{color:#8C1D2B}a:hover{color:#6F1622}
+@keyframes fadeUp{0%{opacity:0;transform:translateY(12px)}100%{opacity:1;transform:none}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,106,36,.45)}70%{box-shadow:0 0 0 7px rgba(62,106,36,0)}100%{box-shadow:0 0 0 0 rgba(62,106,36,0)}}
+.rise{animation:fadeUp 440ms cubic-bezier(.2,.9,.25,1) both}
+.live{animation:pulse 1.8s ease-out infinite}
+.room{transition:transform 160ms ease, box-shadow 200ms ease}
+.room:hover{box-shadow:0 10px 24px rgba(40,20,20,.08)}
+.room:active{transform:scale(.98)}
+`;
 
-export default function ChatPage() {
+const ACTIVE_MS = 10 * 60_000; // a room counts as live while its last message is this fresh
+
+export default function ChatRoomsPage() {
   const rooms = useChatRooms(useCourseRecords());
+  const previews = useRoomPreviews(rooms);
+  const toneOf = useCourseTone();
+  const [now] = useState(() => Date.now());
+
   return (
-    <Screen title="Chat" description="Anonymous rooms for the classes you’re taking">
-      <p className="mb-3 rounded-2xl bg-amber-100 px-3.5 py-2.5 text-xs font-bold text-amber-900">Room access is based on the courses you enter yourself.</p>
-      {rooms === undefined ? <p role="status" className="mt-4 text-sm text-neutral-600">Loading chats…</p> : rooms === null ? (
-        <EmptyState title="Couldn’t load chats" body="Refresh the page to try again." />
-      ) : rooms.length === 0 ? (
-        <>
-          <EmptyState title="No course chats yet" body="Chats open for the courses you report taking this term." />
-          <Link href="/profile" className={`${secondary} w-full`}>
-            Add courses
-          </Link>
-        </>
-      ) : (
-        <ul className="space-y-2.5">
-          {rooms.map((r, i) => (
-            <li key={r.room_id}>
-              <Link href={`/chat/${r.room_id}`} className="surface flex items-center gap-3 transition-shadow hover:shadow-raised">
-                <span aria-hidden="true" className={`grid size-12 shrink-0 place-items-center rounded-2xl text-sm font-black ${roomColors[i % roomColors.length]}`}>
-                  {r.course_code.match(/\d+[A-Z]*$/i)?.[0] ?? r.course_code.slice(0, 3)}
+    <Frame css={CSS}>
+      <header style={s('flex-shrink: 0; padding: 12px 20px 0; display: flex; flex-direction: column; gap: 4px')}>
+        <div style={s('display: flex; align-items: center; justify-content: space-between; height: 44px')}>
+          <h1 style={s('margin: 0; font-size: 32px; font-weight: 900; letter-spacing: -0.02em')}>Chat</h1>
+          <AvatarLink />
+        </div>
+      </header>
+
+      <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 16px; display: flex; flex-direction: column; gap: 10px')}>
+        {(rooms ?? []).map((room, i) => {
+          const tone = toneOf(room.course_id);
+          const {last, unread} = previews[room.room_id] ?? {last: null, unread: 0};
+          const live = !!last && now - new Date(last.created_at).getTime() < ACTIVE_MS;
+          return (
+            <Link key={room.room_id} href={`/chat/${room.room_id}`} className="room rise" style={s(`flex-shrink: 0; padding: 14px; border-radius: 22px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06); text-decoration: none; color: #1D1B1A; display: flex; gap: 12px; animation-delay: ${40 + i * 60}ms`)}>
+              <span style={s(`width: 52px; height: 52px; flex-shrink: 0; border-radius: 18px; background: ${tone.bg}; color: ${tone.fg}; font-size: 14px; font-weight: 900; display: flex; align-items: center; justify-content: center`)}>{courseNumber(room.course_code)}</span>
+              <span style={s('flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px')}>
+                <span style={s('display: flex; align-items: center; justify-content: space-between')}><span style={s('font-size: 16px; font-weight: 900')}>{room.course_code}</span><span style={s('font-size: 12px; font-weight: 800; color: #5F5A55')}>{last ? stamp(last.created_at, new Date(now)) : ''}</span></span>
+                <span style={s(`font-size: 14px; font-weight: 600; color: ${unread ? '#3D3936' : '#5F5A55'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis`)}>{last ? `${nickname(last.alias)}: ${last.body}` : 'No messages yet. Say hello.'}</span>
+                <span style={s('display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 12px; font-weight: 800; color: #5F5A55')}>
+                  <span className={live ? 'live' : undefined} aria-hidden="true" style={s(`width: 8px; height: 8px; border-radius: 4px; background: ${live ? '#3E6A24' : '#C9C3BC'}`)} />
+                  {plural(Number(room.participant_count), 'member')}
+                  {unread > 0 && <span style={s('margin-left: auto; min-width: 22px; height: 22px; padding: 0 7px; box-sizing: border-box; border-radius: 11px; background: #1D1B1A; color: #FFFFFF; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center')}>{unread >= 30 ? '30+' : unread}</span>}
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-black wrap-anywhere">{r.course_code}</span>
-                  {r.my_alias && <span className="text-xs text-neutral-600">You are {r.my_alias}</span>}
-                  <span className="block text-xs font-bold text-neutral-600">{r.participant_count} here</span>
-                </span>
-                <span className="shrink-0 text-neutral-500"><Chevron /></span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Screen>
+              </span>
+            </Link>
+          );
+        })}
+        {rooms === null && <EmptyNote role="alert">Couldn’t load your chats. Pull up this tab again in a moment.</EmptyNote>}
+        {rooms?.length === 0 && <EmptyNote>No class chats yet. A room opens for each course you’re taking this term.</EmptyNote>}
+
+      </main>
+
+      <TabBar active="chat" />
+    </Frame>
   );
 }

@@ -66,6 +66,7 @@ class CandidateCourse(ContractModel):
     already_completed: bool
     repeatable: bool
     requirement_fit: float | None = Field(default=None, ge=0, le=1)
+    breadth: list[Annotated[str, Field(min_length=1)]] | None = None
     grade_stats: GradeStats | None = None
     section_bundles: list[SectionBundle]
 
@@ -104,6 +105,7 @@ class Weights(ContractModel):
     grade_outcomes: Weight
     degree_fit: Weight
     instructor: Weight
+    breadth: Weight = 0
 
     @model_validator(mode="after")
     def _not_all_zero(self) -> "Weights":
@@ -114,6 +116,15 @@ class Weights(ContractModel):
 
 class Preferences(ContractModel):
     weights: Weights
+    preferred_breadths: list[Annotated[str, Field(min_length=1)]] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def _valid_breadths(self) -> "Preferences":
+        if any(not code.strip() for code in self.preferred_breadths):
+            raise ValueError("preferred_breadths must not contain blank values")
+        if len({code.strip().casefold() for code in self.preferred_breadths}) != len(self.preferred_breadths):
+            raise ValueError("preferred_breadths must be unique")
+        return self
 
 
 class WalkingEdge(ContractModel):

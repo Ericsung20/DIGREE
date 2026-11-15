@@ -1,29 +1,53 @@
-import {expect, test} from 'vitest';
+import {expect, test, vi} from 'vitest';
 import {isRoomMember, myChatRooms} from './chat';
-import {filterPosts, makeAlias, type Post} from './community';
+import {filterPosts, makeAlias, setVote, type Post} from './community';
 import type {CourseRecord} from './course-records';
-import {viewFriendSchedule, type Friend} from './friends';
+import {acceptFriend, sendFriendRequest, viewFriendSchedule, type Friend} from './friends';
 
-const friend = (over: Partial<Friend>): Friend => ({id: 'x', name: 'X', status: 'accepted', theirVisibility: 'full', myVisibility: 'private', schedule: 1, ...over});
+const friend = (over: Partial<Friend>): Friend => ({id: 'x', name: 'X', status: 'accepted', schedule: 1, ...over});
 const record = (course_id: string, over: Partial<CourseRecord> = {}): CourseRecord => ({id: course_id, term: '2027SP', course_id, credits: 3, status: 'enrolled_self_reported', bundle_id: null, counts_toward_major: false, source: 'manual', ...over});
 
-test('friend schedule: no access unless accepted and shared', () => {
+test('friend schedule: no access until the request is accepted', () => {
   expect(viewFriendSchedule(undefined)).toEqual({access: 'none'}); // not a friend at all
   expect(viewFriendSchedule(friend({status: 'incoming'}))).toEqual({access: 'none'});
   expect(viewFriendSchedule(friend({status: 'outgoing'}))).toEqual({access: 'none'});
-  expect(viewFriendSchedule(friend({theirVisibility: 'private'}))).toEqual({access: 'none'});
+  expect(viewFriendSchedule(friend({schedule: null}))).toEqual({access: 'none'});
 });
 
-test('friend schedule: free/busy exposes times only, full exposes course codes', () => {
-  const fb = viewFriendSchedule(friend({theirVisibility: 'free_busy'}));
-  if (fb.access !== 'free_busy') throw new Error('expected free_busy');
-  expect(fb.blocks.length).toBeGreaterThan(0);
-  expect(Object.keys(fb.blocks[0]).sort()).toEqual(['day', 'end_min', 'start_min']);
-  expect(JSON.stringify(fb)).not.toMatch(/COMP SCI|MATH|STAT|building|gpa/i);
-
-  const full = viewFriendSchedule(friend({theirVisibility: 'full'}));
+test('friend schedule: accepted friends see course codes without private grades', () => {
+  const full = viewFriendSchedule(friend({}));
   expect(full.access === 'full' && full.items.map((i) => i.label)).toEqual(['COMP SCI 400', 'MATH 234', 'STAT 240']);
   expect(JSON.stringify(full)).not.toMatch(/gpa|grade/i);
+});
+
+test('NetID request stays pending until the recipient accepts', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value)});
+  try {
+    expect(await sendFriendRequest('newstudent')).toBeNull();
+    const pending = (JSON.parse(values.get('digree.friends')!) as Friend[]).find((item) => item.name === 'newstudent');
+    expect(pending?.status).toBe('outgoing');
+    expect(viewFriendSchedule(pending)).toEqual({access: 'none'});
+    expect(await acceptFriend('f4')).toBeNull();
+    const accepted = (JSON.parse(values.get('digree.friends')!) as Friend[]).find((item) => item.id === 'f4');
+    expect(accepted?.status).toBe('accepted');
+    expect(viewFriendSchedule(accepted).access).toBe('full');
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test('downvotes never show a negative score', async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('localStorage', {getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value)});
+  try {
+    expect(await setVote('post-test', -1)).toBeNull();
+    expect(JSON.parse(values.get('vote:post-test')!)).toEqual({score: 0, my_vote: -1});
+    expect(await setVote('post-test', 1)).toBeNull();
+    expect(JSON.parse(values.get('vote:post-test')!)).toEqual({score: 1, my_vote: 1});
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 test('chat rooms: only current-term self-reported courses, sorted by course code', () => {

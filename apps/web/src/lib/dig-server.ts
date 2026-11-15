@@ -1,10 +1,8 @@
 // Server-only: reads the signed-in user's planned courses and the catalog, then builds the optimizer request.
 import {randomUUID} from 'node:crypto';
-import {parseDigInputs, toGenerateRequest, type CatalogRows, type DigDefaults, type GenerateRequest} from './dig-request';
+import {parseDigInputs, toGenerateRequest, type CatalogRows, type GenerateRequest} from './dig-request';
 import {evaluateRequisites, requisiteEvidence, type PriorAttempt} from './dig-prerequisites';
 import {supabaseServer} from './supabase-server';
-import type {Term} from './data/catalog';
-import {displayTerm} from './terms';
 
 type Db = Awaited<ReturnType<typeof supabaseServer>>;
 
@@ -13,41 +11,6 @@ async function plannedCourseIds(db: Db, term: string): Promise<string[]> {
   const {data, error} = await db.from('user_course_records').select('course_id').eq('term', term).eq('status', 'planned');
   if (error) throw error;
   return (data as {course_id: string}[]).map((r) => r.course_id);
-}
-
-/** Form defaults for the DIG screen, or null when nobody is signed in or no term exists. */
-export async function getDigDefaults(selectedTerm?: string): Promise<DigDefaults | 'no-terms' | null> {
-  const db = await supabaseServer();
-  const {data: auth} = await db.auth.getUser();
-  if (!auth.user) return null;
-  const {data: terms, error} = await db.from('terms').select('id, label, is_current').order('id');
-  if (error) throw error;
-  const list = terms as Term[];
-  const planned = await db.from('user_course_records').select('term').eq('status', 'planned').order('term', {ascending: false}).limit(1).maybeSingle();
-  if (planned.error) throw planned.error;
-  const term = list.find((t) => t.id === selectedTerm) ?? list.find((t) => t.id === planned.data?.term) ?? list.at(-1);
-  if (!term) return 'no-terms';
-  const ids = await plannedCourseIds(db, term.id);
-  const [{data: courses, error: courseError}, available] = await Promise.all([
-    ids.length ? db.from('courses').select('id, code, credit_options').in('id', ids).order('code') : {data: [], error: null},
-    db.from('section_bundles').select('term').eq('term', term.id).limit(1),
-  ]);
-  if (courseError) throw courseError;
-  if (available.error) throw available.error;
-  const rows = (courses ?? []) as {id: string; code: string; credit_options: number[]}[];
-  const credits = rows.reduce((sum, c) => sum + c.credit_options[0], 0);
-  return {
-    term: term.id,
-    termLabel: displayTerm(term.label),
-    terms: list.map(({id, label}) => ({id, label: displayTerm(label)})),
-    minCredits: Math.min(40, credits),
-    maxCredits: Math.min(40, rows.reduce((sum, c) => sum + Math.max(...c.credit_options), 0)),
-    earliest: 480,
-    latest: 1140,
-    courses: rows.map((c) => ({id: c.id, code: c.code, credits: c.credit_options.join('/'), required: true})),
-    sample: false,
-    hasSections: available.data.length > 0,
-  };
 }
 
 async function walkingEdges(db: Db, meetings: CatalogRows['meetings']): Promise<CatalogRows['edges']> {
@@ -103,11 +66,11 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   const {data: auth} = await db.auth.getUser();
   if (!auth.user) return {error: 'Sign in to generate schedules.'};
   const plannedIds = await plannedCourseIds(db, inputs.term);
-  if (plannedIds.length === 0) return {error: 'Add planned courses for this term first.'};
-  if (inputs.required.some((id) => !plannedIds.includes(id))) return {error: 'Your planned courses changed. Reopen DIG and try again.'};
+  if (plannedIds.length === 0) return {error: 'Add a must-take course for this term first.'};
+  if (inputs.required.some((id) => !plannedIds.includes(id))) return {error: 'Your must-take courses changed. Go back to your conditions and dig again.'};
   const required = new Set(inputs.required);
   const [catalog, history, profile] = await Promise.all([
-    db.from('courses').select('id, code, credit_options, repeatable').in('id', plannedIds).order('code'),
+    db.from('courses').select('id, code, credit_options, repeatable, breadth').in('id', plannedIds).order('code'),
     loadCourseHistory(db, term),
     db.from('academic_profiles').select('academic_programs(label)').maybeSingle()
       .overrideTypes<{academic_programs: {label: string} | null}, {merge: false}>(),
@@ -151,19 +114,26 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   const {accepted: courses, blocked} = assess(planned, requisiteRows);
   if (blocked.length) return {error: blocked.join(' ')};
   const availableCredits = courses.reduce((total, course) => total + Math.max(...course.credit_options), 0);
-  if (inputs.related && availableCredits < inputs.minCredits) {
-    const subjects = [...new Set(courses.flatMap(({code}) => {
+  if ((inputs.related || inputs.preferredBreadths?.length) && availableCredits < inputs.minCredits) {
+    const preferred = inputs.preferredBreadths ?? [];
+    const breadthExtras = preferred.length ? await db.from('courses')
+      .select('id, code, credit_options, repeatable, breadth, section_bundles!inner(term)')
+      .overlaps('breadth', preferred).eq('section_bundles.term', inputs.term).neq('section_bundles.seat_status', 'full')
+      .order('code').limit(20) : null;
+    if (breadthExtras?.error) throw breadthExtras.error;
+    const subjects = inputs.related ? [...new Set(courses.flatMap(({code}) => {
       const subject = /^([A-Z &-]+) \d+[A-Z]?$/i.exec(code)?.[1];
       return subject ? [subject] : [];
-    }))].slice(0, 3);
+    }))].slice(0, 3) : [];
     const extras = await Promise.all(subjects.map(async (subject) => {
-      const {data, error} = await db.from('courses').select('id, code, credit_options, repeatable, section_bundles!inner(term)')
+      const {data, error} = await db.from('courses').select('id, code, credit_options, repeatable, breadth, section_bundles!inner(term)')
         .ilike('code', `${subject} %`).eq('section_bundles.term', inputs.term).neq('section_bundles.seat_status', 'full')
         .order('code').limit(12);
       if (error) throw error;
-      return data.map(({id, code, credit_options, repeatable}) => ({id, code, credit_options, repeatable}));
+      return data.map(({id, code, credit_options, repeatable, breadth}) => ({id, code, credit_options, repeatable, breadth}));
     }));
-    const unique = [...new Map(extras.flat().filter((course) => !plannedIds.includes(course.id)).map((course) => [course.id, course])).values()];
+    const preferredRows = (breadthExtras?.data ?? []).map(({id, code, credit_options, repeatable, breadth}) => ({id, code, credit_options, repeatable, breadth}));
+    const unique = [...new Map([...preferredRows, ...extras.flat()].filter((course) => !plannedIds.includes(course.id)).map((course) => [course.id, course])).values()];
     const extraRequisites = await loadRequisites(db, term, unique.map(course => course.id));
     const {accepted: eligible} = assess(unique, extraRequisites);
     courses.push(...eligible.slice(0, Math.max(0, 20 - (courses.length - inputs.required.length))));

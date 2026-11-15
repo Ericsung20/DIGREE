@@ -1,5 +1,4 @@
-@import "tailwindcss";
-
+/* Base only. Each screen carries its own stylesheet, copied from the design file (see components/dg.tsx). */
 @font-face {
   font-family: Nunito;
   src: url("/nunito-latin.woff2") format("woff2");
@@ -8,99 +7,54 @@
   font-display: swap;
 }
 
-@theme {
-  --font-sans: Nunito, system-ui, sans-serif;
-  --color-accent: #8c1d2b;
-  --color-accent-dark: #6f1622;
-  --color-accent-soft: #f5e3e5;
-  --color-canvas: #f7f5f2;
-  --color-surround: #efebe6;
-  --color-neutral-50: #f7f5f2;
-  --color-neutral-100: #ece8e3;
-  --color-neutral-200: #eae6e1;
-  --color-neutral-300: #c9c3bc;
-  --color-neutral-500: #6e6863;
-  --color-neutral-600: #5f5a55;
-  --color-neutral-900: #1d1b1a;
-  --color-sky-100: #dce8f7;
-  --color-sky-900: #1c3d66;
-  --color-emerald-100: #d6efe8;
-  --color-emerald-900: #17584a;
-  --color-amber-100: #f7e9cf;
-  --color-amber-900: #6a4708;
-  --color-violet-100: #e7e0f3;
-  --color-violet-900: #46356f;
-  --color-rose-100: #f2dce5;
-  --color-rose-900: #782e51;
-  --shadow-card: 0 1px 3px rgb(40 20 20 / 8%);
-  --shadow-raised: 0 10px 28px rgb(40 20 20 / 6%);
-  --shadow-dig: 0 8px 20px rgb(140 29 43 / 32%);
-  --radius-card: 1.375rem;
+html {
+  -webkit-text-size-adjust: 100%;
 }
 
-@layer base {
+body {
+  margin: 0;
+  background: #EFEBE6;
+}
+
+/* The design is a 390 × 844 phone screen. A phone gets it edge to edge; a larger window shows the same screen centered. */
+.dg-frame {
+  width: 100%;
+  height: 100dvh;
+  margin: 0 auto;
+}
+
+@media (min-width: 480px) {
   body {
-    background: var(--color-surround);
-    color: var(--color-neutral-900);
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  :where(button, a, input, select, textarea):focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 3px;
-  }
-
-  button:enabled {
-    cursor: pointer;
-  }
-
-  input[type="checkbox"] {
-    accent-color: var(--color-accent);
+  .dg-frame {
+    width: 390px;
+    height: min(844px, 100dvh);
+    margin: 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   }
 }
 
-@utility app-frame {
-  @apply mx-auto min-h-dvh w-full max-w-xl bg-canvas px-5 pt-3 shadow-raised sm:px-8 sm:pt-6;
-}
-
-@utility surface {
-  @apply rounded-card bg-white p-4 shadow-card;
-}
-
-@utility page-title {
-  @apply text-[2rem] font-black leading-[1.1] tracking-[-0.025em];
-  overflow-wrap: anywhere;
-}
-
-@utility section-title {
-  @apply text-base font-extrabold tracking-tight;
-}
-
-@utility choice-chip {
-  @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-white px-3.5 py-1.5 text-sm font-extrabold shadow-card;
-  transition: background-color 150ms ease, color 150ms ease;
-
-  &:is([aria-pressed="true"], :has(input:checked)) {
-    @apply bg-neutral-900 text-white;
-  }
-
-  &:has(input:focus) {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 3px;
-  }
-
-  &:has(input:disabled) {
-    opacity: 0.6;
-  }
+/* A native control laid over a designed button: the button keeps its look, the platform supplies the picker. */
+.dg-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-body:has([data-subscreen]) .app-tabs {
-  display: none;
 }

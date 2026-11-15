@@ -81,6 +81,8 @@ export interface components {
             already_completed: boolean;
             repeatable: boolean;
             requirement_fit?: number | null;
+            /** @description Catalog breadth codes for this course; null means unknown */
+            breadth?: string[] | null;
             grade_stats?: components["schemas"]["GradeStats"] | null;
             section_bundles: components["schemas"]["SectionBundle"][];
         };
@@ -105,9 +107,13 @@ export interface components {
             grade_outcomes: number;
             degree_fit: number;
             instructor: number;
+            /** @description Preference for optional courses matching preferred_breadths */
+            breadth?: number;
         };
         Preferences: {
             weights: components["schemas"]["Weights"];
+            /** @description Catalog breadth codes to favor, without excluding other courses */
+            preferred_breadths?: string[];
         };
         WalkingEdge: {
             from_building_id: string;

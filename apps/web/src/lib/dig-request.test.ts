@@ -18,7 +18,10 @@ test('parseDigInputs rejects out-of-contract values', () => {
   expect(bad({earliest: 1200, latest: 600})).toBe(true);
   expect(bad({blocked: ['FUNDAY']})).toBe(true);
   expect(bad({required: 'a'})).toBe(true);
-  expect(bad({preference: 'unknown'})).toBe(true);
+  expect(bad({prefer: ['unknown']})).toBe(true);
+  expect(bad({prefer: 'walks'})).toBe(true);
+  expect(bad({preferred_breadths: ['']})).toBe(true);
+  expect(bad({preferred_breadths: 'H'})).toBe(true);
 });
 
 const inputs: DigInputs = {term: '1274', minCredits: 6, maxCredits: 7, required: ['a'], earliest: 480, latest: 1140, blockedDays: []};
@@ -45,7 +48,8 @@ test('toGenerateRequest maps catalog rows to the contract without guessing', () 
   const req = toGenerateRequest(inputs, rows, 'req-1');
   expect(req.contract_version).toBe('1.0');
   expect(req.top_k).toBe(5);
-  expect(toGenerateRequest({...inputs, preference: 'walking'}, rows, 'req-2').preferences.weights).toMatchObject({walking: 3, campus_days: 1});
+  expect(toGenerateRequest({...inputs, prefer: ['walks', 'lunch']}, rows, 'req-2').preferences.weights).toMatchObject({walking: 1, idle_gap: 0.1, campus_days: 0.4});
+  for (const weight of Object.values(req.preferences.weights)) expect(weight).toBeLessThanOrEqual(1); // the optimizer rejects anything above 1
   expect(req.constraints).toMatchObject({min_credits: 6, max_credits: 7, earliest_start_min: 480, latest_end_min: 1140, blocked_days: []});
   const [a, b] = req.courses;
   expect(a).toMatchObject({course_id: 'a', course_code: 'AAA 101', is_required: true, already_completed: false, eligibility_status: 'unknown', requirement_fit: null, grade_stats: {a_ab_rate: 0.61, sample_size: 420}});
@@ -55,6 +59,15 @@ test('toGenerateRequest maps catalog rows to the contract without guessing', () 
   expect(b.section_bundles[0].meetings[0].building_id).toBeNull(); // unknown building stays null
   expect(req.walking_edges).toEqual([]); // no walking data means none is sent
   expect(() => assertNoUserData(req)).not.toThrow();
+});
+
+test('breadth preference reaches the optimizer with catalog codes', () => {
+  const withBreadth = {...rows, courses: rows.courses.map((course) => ({...course, breadth: course.id === 'b' ? ['H'] : null}))};
+  const parsed = parseDigInputs({...body, preferred_breadths: ['h', 'H']});
+  if ('error' in parsed) throw new Error(parsed.error);
+  const req = toGenerateRequest(parsed, withBreadth, 'breadth-test');
+  expect(req.preferences).toMatchObject({preferred_breadths: ['H'], weights: {breadth: 1}});
+  expect(req.courses[1].breadth).toEqual(['H']);
 });
 
 // Opt-in: set OPTIMIZER_LIVE_URL=http://127.0.0.1:8000 to check a built request against the running optimizer.
