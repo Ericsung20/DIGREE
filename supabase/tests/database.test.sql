@@ -9,11 +9,11 @@ select is_empty(
         and relkind in ('r', 'p') and not relrowsecurity$$,
     'All public tables have row-level security'
 );
-select is((select count(*) from courses), 3::bigint, 'Seed: three courses');
-select is((select count(*) from section_bundles), 5::bigint, 'Seed: five section bundles');
-select is((select count(*) from meetings), 10::bigint, 'Seed: ten meetings');
+select is((select count(*) from courses where source = 'demo_fixture'), 3::bigint, 'Seed: three courses');
+select is((select count(*) from section_bundles where term = '2027SP'), 5::bigint, 'Seed: five section bundles');
+select is((select count(*) from meetings where term = '2027SP'), 10::bigint, 'Seed: ten meetings');
 select is((select count(*) from walking_edges), 3::bigint, 'Seed: three walking edges');
-select is((select count(*) from chat_rooms), 3::bigint, 'Seed: one room per course');
+select is((select count(*) from chat_rooms where term = '2027SP'), 3::bigint, 'Seed: one room per course');
 select is(
     (select array_agg(tablename::text order by tablename) from pg_publication_tables
         where pubname = 'supabase_realtime' and schemaname = 'public'),
@@ -69,8 +69,12 @@ values ('30000000-0000-0000-0000-000000000001', '2027SP', 'cs400', 'cs400-A', 3)
 insert into friendships (requester_id, receiver_id, status) values ('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002', 'accepted');
 insert into posts (id, author_id, course_id, category, body)
 values ('40000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001', 'cs400', 'test', 'Test post');
-update chat_rooms set id = '50000000-0000-0000-0000-000000000001' where term = '2027SP' and course_id = 'cs400';
-update chat_rooms set id = '50000000-0000-0000-0000-000000000002' where term = '2027SP' and course_id = 'math234';
+do $$
+begin
+    perform set_config('digree.test_room_id',
+        (select id::text from chat_rooms where term = '2027SP' and course_id = 'cs400'), true);
+end;
+$$;
 insert into chat_rooms (id, term, course_id) values ('50000000-0000-0000-0000-000000000003', 'TEST-PAST', 'cs400');
 
 set local role anon;
@@ -81,6 +85,7 @@ select throws_ok($$insert into colleges (label) values ('Blocked')$$, '42501', n
     'Anon cannot write reference data');
 select throws_ok($$select * from academic_profiles$$, '42501', null, 'Anon cannot read profiles');
 select throws_ok($$select * from courses$$, '42501', null, 'Anon cannot read the course catalog');
+select throws_ok($$select * from course_grade_stats$$, '42501', null, 'Anon cannot read grade aggregates');
 select throws_ok($$select * from grade_entries$$, '42501', null, 'Anon cannot read grades or GPA inputs');
 select throws_ok($$select * from saved_schedule_items$$, '42501', null, 'Anon cannot read schedules');
 select throws_ok($$select * from schedule_free_busy('10000000-0000-0000-0000-000000000001', '2027SP', 'planned')$$,
@@ -100,6 +105,7 @@ set local role authenticated;
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000001';
 select ok(exists (select from meetings where day = 'MON'), 'Signed-in users can read catalog meetings');
 select throws_ok($$update courses set title = 'Blocked'$$, '42501', null, 'Users cannot write the catalog');
+select throws_ok($$update course_grade_stats set sample_size = 1$$, '42501', null, 'Users cannot change grade aggregates');
 select is_empty($$select user_id from academic_profiles$$, 'Another user profile is invisible');
 select lives_ok(
     $$insert into academic_profiles (user_id, college_id, program_id, catalog_year)
@@ -115,23 +121,29 @@ select results_eq($$select course_code from my_chat_rooms()$$, $$values ('COMP S
 select ok(not is_room_member('50000000-0000-0000-0000-000000000003'), 'An enrolled record in a prior term gives no access');
 select throws_ok($$select join_chat_room('50000000-0000-0000-0000-000000000003')$$, '42501', null, 'Prior-term room join denied');
 
-select ok(join_chat_room('50000000-0000-0000-0000-000000000001') is not null, 'Eligible user can join and get an alias');
-select is(join_chat_room('50000000-0000-0000-0000-000000000001'), (select my_alias from my_chat_rooms() where room_id = '50000000-0000-0000-0000-000000000001'),
+do $$
+begin
+    perform set_config('digree.test_room_count',
+        (select participant_count::text from my_chat_rooms() where room_id = current_setting('digree.test_room_id')::uuid), true);
+end;
+$$;
+select ok(join_chat_room(current_setting('digree.test_room_id')::uuid) is not null, 'Eligible user can join and get an alias');
+select is(join_chat_room(current_setting('digree.test_room_id')::uuid), (select my_alias from my_chat_rooms() where room_id = current_setting('digree.test_room_id')::uuid),
     'Repeated joins keep the same room alias');
 select lives_ok(
     $$insert into chat_messages (room_id, alias, body)
-        select room_id, my_alias, 'B8 chat test' from my_chat_rooms() where room_id = '50000000-0000-0000-0000-000000000001'$$,
+        select room_id, my_alias, 'B8 chat test' from my_chat_rooms() where room_id = current_setting('digree.test_room_id')::uuid$$,
     'Eligible user can post with their own alias'
 );
 
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000003';
-select ok(join_chat_room('50000000-0000-0000-0000-000000000001') is not null, 'Another current-course user can join');
+select ok(join_chat_room(current_setting('digree.test_room_id')::uuid) is not null, 'Another current-course user can join');
 select throws_ok(
     $$insert into chat_messages (room_id, alias, body)
-        select room_id, alias, 'Spoof' from chat_messages where room_id = '50000000-0000-0000-0000-000000000001'$$,
+        select room_id, alias, 'Spoof' from chat_messages where room_id = current_setting('digree.test_room_id')::uuid$$,
     '42501', null, 'A member cannot send under another member alias'
 );
-select is((select participant_count from my_chat_rooms() where room_id = '50000000-0000-0000-0000-000000000001'), 2::bigint,
+select is((select participant_count from my_chat_rooms() where room_id = current_setting('digree.test_room_id')::uuid), current_setting('digree.test_room_count')::bigint + 2,
     'Participant count includes joined, currently eligible members');
 
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000002';
@@ -141,9 +153,9 @@ select is_empty(
     'A friend cannot update grades'
 );
 select is_empty($$select room_id from my_chat_rooms()$$, 'A planned record exposes no rooms');
-select is_empty($$select id from chat_rooms where id = '50000000-0000-0000-0000-000000000001'$$, 'Direct room lookup is also blocked');
-select is_empty($$select id from chat_messages where room_id = '50000000-0000-0000-0000-000000000001'$$, 'Nonmembers see no room messages');
-select throws_ok($$select join_chat_room('50000000-0000-0000-0000-000000000001')$$, '42501', null, 'Planned record cannot join the room');
+select is_empty($$select id from chat_rooms where id = current_setting('digree.test_room_id')::uuid$$, 'Direct room lookup is also blocked');
+select is_empty($$select id from chat_messages where room_id = current_setting('digree.test_room_id')::uuid$$, 'Nonmembers see no room messages');
+select throws_ok($$select join_chat_room(current_setting('digree.test_room_id')::uuid)$$, '42501', null, 'Planned record cannot join the room');
 select throws_ok($$select author_id from posts$$, '42501', null, 'Author IDs cannot be read from base posts');
 select is_empty(
     $$with matched as (update community_posts set body = 'Cross-user update' where id = '40000000-0000-0000-0000-000000000001' returning id) select id from matched$$,
@@ -208,12 +220,12 @@ select lives_ok(
     $$update user_course_records set status = 'withdrawn' where id = '20000000-0000-0000-0000-000000000001'$$,
     'Student can withdraw their self-reported record'
 );
-select is_empty($$select id from chat_messages where room_id = '50000000-0000-0000-0000-000000000001'$$, 'Withdrawal immediately denies message reads');
+select is_empty($$select id from chat_messages where room_id = current_setting('digree.test_room_id')::uuid$$, 'Withdrawal immediately denies message reads');
 select throws_ok(
-    $$insert into chat_messages (room_id, alias, body) values ('50000000-0000-0000-0000-000000000001', 'old-alias', 'After withdrawal')$$,
+    $$insert into chat_messages (room_id, alias, body) values (current_setting('digree.test_room_id')::uuid, 'old-alias', 'After withdrawal')$$,
     '42501', null, 'Withdrawal immediately denies sends'
 );
-select is_empty($$select room_id from my_chat_rooms() where room_id = '50000000-0000-0000-0000-000000000001'$$, 'Withdrawn room disappears from the list');
+select is_empty($$select room_id from my_chat_rooms() where room_id = current_setting('digree.test_room_id')::uuid$$, 'Withdrawn room disappears from the list');
 
 reset role;
 select * from finish();

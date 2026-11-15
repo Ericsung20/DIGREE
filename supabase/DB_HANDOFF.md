@@ -29,6 +29,7 @@ npx --yes prettier@3.6.2 --write supabase/types/database.ts
 | `academic_profiles` | Upsert on `user_id` with `college_id`, `program_id` and `catalog_year` from the same program row. | Owner select, insert, update. |
 | `courses`, `buildings` | Text catalog IDs. Courses expose `code`, `title`, `credit_options`, `breadth`, `repeatable`, `source`, `fetched_at`. Titles and building names can be null. | Signed-in read. Service role maintains the catalog. |
 | `section_bundles`, `meetings`, `walking_edges` | Bundle identity is `(term, course_id, bundle_id)`. Meetings use campus-local minute integers. An asynchronous bundle has zero meeting rows. An edge is keyed by `(from_building_id, to_building_id)`. Store minutes and direction explicitly. | Signed-in read. Service role maintains the catalog. |
+| `course_grade_stats` | Join to `courses.id` by `course_id`. For optimizer `grade_stats`, send `a_ab_rate` and `sample_size`. Missing aggregates map to null. Coverage and source URL are available for display. | Signed-in read. Service role maintains aggregate data. |
 | `user_course_records`, `grade_entries`, `degree_progress` | Course attempt uses a UUID `id` and optional `bundle_id`. Upsert grades by `record_id`. Degree progress is keyed by `(user_id, program_id, requirement_id)`. | Owner CRUD. GPA calculations use owner-visible grades and course records. |
 | `saved_schedules`, `saved_schedule_items` | Schedule has a UUID `id`, owner, term, mode and name. Include `term` in item writes. Items are keyed by `(schedule_id, course_id)` and require a bundle from the same term and course. | Owner CRUD. Accepted friends with `full` permission can read both tables. |
 | `friendships`, `schedule_permissions` | One request per unordered pair. Requester creates `pending`. Receiver accepts. Either participant may block with `blocked_by` set to their own UUID. The blocker removes a blocked friendship. Share per `(owner_id, viewer_id)`. | Participants read and manage their side of the friendship. Permission rows are owner-only. |
@@ -58,5 +59,13 @@ npx --yes prettier@3.6.2 --write supabase/types/database.ts
 ## Data boundaries
 
 - Build optimizer requests server-side from approved catalog fields and normalized constraints. Exclude user IDs, email, GPA, grades, DARS PDFs and chat text.
-- The local catalog and programs are synthetic demo data. The academic source and review fields record provenance without implying university confirmation.
+- The local seed catalog and programs are synthetic demo data. The academic source and review fields record provenance without implying university confirmation.
 - The local deployment uses migrations in `supabase/migrations`. For an approved hosted deployment, inspect the destination schema and migration history, then link the project and review `supabase db push --dry-run` before applying migrations. Keep synthetic seed data local unless the target is explicitly intended for demo data.
+
+## UW data integration
+
+The cloud catalog includes UW public search data for Spring 2027 (term `1274`). Use this term for planning. Use `2027SP` for local fixture demos. Read `section_bundles` filtered by the selected term and match its `meetings` on all three key columns. A course can appear in the catalog before its bundles or historical grade aggregates are available. Leave course eligibility at `unknown` when there is no confirmed result.
+
+Historical grade aggregates come from MadEnroll. They describe past letter grades across the provider's reported coverage, so display the range and sample size with the ratio. See [README.md](./README.md) for the term importer.
+
+The cloud term has no current-term flag. Assign a current term before enabling course chat in a hosted app. The local fixture includes a synthetic walking matrix. Live campus routes stay unknown until a route source is available. Send an empty set of walking edges where none are known. RMP ratings require an authorized source, so live `instructor_score` is null.

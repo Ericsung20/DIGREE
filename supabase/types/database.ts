@@ -274,6 +274,48 @@ export type Database = {
           },
         ];
       };
+      course_grade_stats: {
+        Row: {
+          a_ab_count: number;
+          a_ab_rate: number | null;
+          course_id: string;
+          fetched_at: string;
+          first_term_code: string;
+          last_term_code: string;
+          sample_size: number;
+          source_url: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          a_ab_count: number;
+          a_ab_rate?: never;
+          course_id: string;
+          fetched_at: string;
+          first_term_code: string;
+          last_term_code: string;
+          sample_size: number;
+          source_url: string;
+        };
+        Update: {
+          a_ab_count?: number;
+          a_ab_rate?: never;
+          course_id?: string;
+          fetched_at?: string;
+          first_term_code?: string;
+          last_term_code?: string;
+          sample_size?: number;
+          source_url?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "course_grade_stats_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: true;
+            referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       courses: {
         Row: {
           breadth: string[] | null;
