@@ -1,0 +1,245 @@
+openapi: 3.0.3
+info:
+  title: DIGREE Optimization API
+  version: '1.0.0'
+  description: >-
+    Hackathon MVP contract. Full-stack owns external data acquisition and normalization;
+    optimizer receives anonymized, normalized data only. University enrollment and
+    graduation eligibility are NOT verified by this API.
+servers:
+  - url: http://localhost:8000
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      operationId: health
+      responses:
+        '200':
+          description: API is running
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, contract_version]
+                properties:
+                  status: {type: string, enum: [ok]}
+                  contract_version: {type: string, enum: ['1.0']}
+  /v1/schedules/generate:
+    post:
+      summary: Generate and rank feasible schedules
+      operationId: generateSchedules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GenerateRequest'}
+      responses:
+        '200':
+          description: Search completed. An empty results list is a valid business result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GenerateResponse'}
+        '422':
+          description: Malformed or internally inconsistent input
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Optimizer cannot process the request
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+components:
+  schemas:
+    Day:
+      type: string
+      enum: [MON, TUE, WED, THU, FRI, SAT, SUN]
+    Mode:
+      type: string
+      enum: [in_person, hybrid, online_sync]
+    Meeting:
+      type: object
+      additionalProperties: false
+      required: [day, start_min, end_min, mode]
+      properties:
+        day: {$ref: '#/components/schemas/Day'}
+        start_min: {type: integer, minimum: 0, maximum: 1439, description: 'Minutes after midnight in campus-local time'}
+        end_min: {type: integer, minimum: 1, maximum: 1440}
+        mode: {$ref: '#/components/schemas/Mode'}
+        building_id: {type: string, nullable: true, description: 'Null if online or physical building unknown'}
+    SectionBundle:
+      type: object
+      additionalProperties: false
+      required: [bundle_id, meetings, seat_status]
+      properties:
+        bundle_id: {type: string, minLength: 1, description: 'One valid lecture+discussion+lab package'}
+        meetings:
+          type: array
+          items: {$ref: '#/components/schemas/Meeting'}
+          description: 'Empty for fully asynchronous online sections'
+        seat_status: {type: string, enum: [open, full, unknown]}
+        instructor_score: {type: number, minimum: 0, maximum: 1, nullable: true}
+    GradeStats:
+      type: object
+      additionalProperties: false
+      required: [a_ab_rate, sample_size]
+      properties:
+        a_ab_rate: {type: number, minimum: 0, maximum: 1}
+        sample_size: {type: integer, minimum: 0}
+    CandidateCourse:
+      type: object
+      additionalProperties: false
+      required: [course_id, course_code, credit_options, is_required, eligibility_status, already_completed, repeatable, section_bundles]
+      properties:
+        course_id: {type: string}
+        course_code: {type: string}
+        credit_options:
+          type: array
+          minItems: 1
+          items: {type: integer, minimum: 1, maximum: 30}
+        is_required: {type: boolean}
+        eligibility_status: {type: string, enum: [eligible, ineligible, unknown], description: 'Computed upstream; not a university verification'}
+        already_completed: {type: boolean}
+        repeatable: {type: boolean}
+        requirement_fit: {type: number, minimum: 0, maximum: 1, nullable: true}
+        grade_stats:
+          nullable: true
+          allOf: [{$ref: '#/components/schemas/GradeStats'}]
+        section_bundles:
+          type: array
+          items: {$ref: '#/components/schemas/SectionBundle'}
+    Constraints:
+      type: object
+      additionalProperties: false
+      required: [min_credits, max_credits, earliest_start_min, latest_end_min, blocked_days, walking_buffer_min]
+      properties:
+        min_credits: {type: integer, minimum: 0, maximum: 40}
+        max_credits: {type: integer, minimum: 0, maximum: 40}
+        earliest_start_min: {type: integer, minimum: 0, maximum: 1439}
+        latest_end_min: {type: integer, minimum: 1, maximum: 1440}
+        blocked_days:
+          type: array
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/Day'}
+        walking_buffer_min: {type: integer, minimum: 0, maximum: 60}
+        max_walk_per_transition_min: {type: integer, minimum: 0, maximum: 120, nullable: true}
+        exclude_full_sections: {type: boolean, default: false, description: 'Only when seat-status data is reliable'}
+    Weights:
+      type: object
+      additionalProperties: false
+      required: [walking, idle_gap, campus_days, grade_outcomes, degree_fit, instructor]
+      properties:
+        walking: {type: number, minimum: 0, maximum: 1}
+        idle_gap: {type: number, minimum: 0, maximum: 1}
+        campus_days: {type: number, minimum: 0, maximum: 1}
+        grade_outcomes: {type: number, minimum: 0, maximum: 1}
+        degree_fit: {type: number, minimum: 0, maximum: 1}
+        instructor: {type: number, minimum: 0, maximum: 1}
+    Preferences:
+      type: object
+      additionalProperties: false
+      required: [weights]
+      properties:
+        weights: {$ref: '#/components/schemas/Weights'}
+    WalkingEdge:
+      type: object
+      additionalProperties: false
+      required: [from_building_id, to_building_id, minutes]
+      properties:
+        from_building_id: {type: string}
+        to_building_id: {type: string}
+        minutes: {type: integer, minimum: 0}
+        bidirectional: {type: boolean, default: true}
+    GenerateRequest:
+      type: object
+      additionalProperties: false
+      required: [contract_version, request_id, term, top_k, constraints, preferences, courses, walking_edges]
+      properties:
+        contract_version: {type: string, enum: ['1.0']}
+        request_id: {type: string, minLength: 1}
+        term: {type: string, example: '2027SP'}
+        top_k: {type: integer, minimum: 1, maximum: 5}
+        constraints: {$ref: '#/components/schemas/Constraints'}
+        preferences: {$ref: '#/components/schemas/Preferences'}
+        courses:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/CandidateCourse'}
+        walking_edges:
+          type: array
+          items: {$ref: '#/components/schemas/WalkingEdge'}
+    SelectedBundle:
+      type: object
+      additionalProperties: false
+      required: [course_id, course_code, bundle_id, credits, meetings]
+      properties:
+        course_id: {type: string}
+        course_code: {type: string}
+        bundle_id: {type: string}
+        credits: {type: integer, minimum: 1}
+        meetings:
+          type: array
+          items: {$ref: '#/components/schemas/Meeting'}
+    Metrics:
+      type: object
+      additionalProperties: false
+      required: [total_credits, walking_minutes_weekly, idle_gap_minutes_weekly, campus_days]
+      properties:
+        total_credits: {type: integer}
+        walking_minutes_weekly: {type: integer}
+        idle_gap_minutes_weekly: {type: integer}
+        campus_days: {type: integer}
+    ScheduleResult:
+      type: object
+      additionalProperties: false
+      required: [rank, score, status, selected, metrics, warnings, reasons]
+      properties:
+        rank: {type: integer, minimum: 1}
+        score: {type: number, minimum: 0, maximum: 100}
+        status: {type: string, enum: [ready, needs_review]}
+        selected:
+          type: array
+          items: {$ref: '#/components/schemas/SelectedBundle'}
+        metrics: {$ref: '#/components/schemas/Metrics'}
+        warnings:
+          type: array
+          items: {type: string}
+        reasons:
+          type: array
+          items: {type: string}
+    Diagnostics:
+      type: object
+      additionalProperties: false
+      required: [explored_combinations, rejected_by_reason, search_truncated, no_results_reasons]
+      properties:
+        explored_combinations: {type: integer, minimum: 0}
+        rejected_by_reason:
+          type: object
+          additionalProperties: {type: integer, minimum: 0}
+        search_truncated: {type: boolean}
+        no_results_reasons:
+          type: array
+          items: {type: string}
+    GenerateResponse:
+      type: object
+      additionalProperties: false
+      required: [contract_version, request_id, term, results, diagnostics]
+      properties:
+        contract_version: {type: string, enum: ['1.0']}
+        request_id: {type: string}
+        term: {type: string}
+        results:
+          type: array
+          items: {$ref: '#/components/schemas/ScheduleResult'}
+        diagnostics: {$ref: '#/components/schemas/Diagnostics'}
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {type: array, items: {type: string}}
