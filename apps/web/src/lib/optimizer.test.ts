@@ -77,6 +77,18 @@ test('callOptimizer maps 200 / 422 / 503 / network to distinct kinds and never s
   vi.stubGlobal('fetch', reply(422, {error: {code: 'bad', message: 'weights are all zero'}}));
   expect(await callOptimizer(body)).toEqual({kind: 'validation', message: 'weights are all zero'});
 
+  vi.stubGlobal('fetch', reply(422, {error: {
+    code: 'validation_error',
+    message: 'Request validation failed.',
+    details: ['preferences.preferred_breadths: Extra inputs are not permitted', 'courses[0].breadth: Extra inputs are not permitted'],
+  }}));
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    expect(await callOptimizer(body)).toEqual({kind: 'unavailable', message: 'The DIG server is running an older version.'});
+  } finally {
+    warn.mockRestore();
+  }
+
   vi.stubGlobal('fetch', reply(503, {error: {code: 'down', message: 'busy'}}));
   expect((await callOptimizer(body)).kind).toBe('unavailable');
 

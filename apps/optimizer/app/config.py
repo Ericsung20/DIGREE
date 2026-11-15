@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 MAX_SEARCH_STEPS_ENV = "DIGREE_MAX_SEARCH_STEPS"
 MAX_OPTIONAL_COURSES_ENV = "DIGREE_MAX_OPTIONAL_COURSES"
+MAX_CATALOG_SEARCH_STEPS_ENV = "DIGREE_MAX_CATALOG_SEARCH_STEPS"
 
 # Upper bounds catch typos such as an extra zero before they hang the service.
 SEARCH_STEPS_CEILING = 10_000_000
@@ -17,10 +18,12 @@ class SearchLimits:
 
     max_search_steps: int = 100_000
     max_optional_courses: int = 20
+    max_catalog_search_steps: int = 750_000
 
     def __post_init__(self) -> None:
         _check("max_search_steps", self.max_search_steps, SEARCH_STEPS_CEILING)
         _check("max_optional_courses", self.max_optional_courses, OPTIONAL_COURSES_CEILING)
+        _check("max_catalog_search_steps", self.max_catalog_search_steps, SEARCH_STEPS_CEILING)
 
 
 def load_search_limits(environ: Mapping[str, str]) -> SearchLimits:
@@ -32,6 +35,9 @@ def load_search_limits(environ: Mapping[str, str]) -> SearchLimits:
         ),
         max_optional_courses=_read(
             environ, MAX_OPTIONAL_COURSES_ENV, defaults.max_optional_courses, OPTIONAL_COURSES_CEILING
+        ),
+        max_catalog_search_steps=_read(
+            environ, MAX_CATALOG_SEARCH_STEPS_ENV, defaults.max_catalog_search_steps, SEARCH_STEPS_CEILING
         ),
     )
 

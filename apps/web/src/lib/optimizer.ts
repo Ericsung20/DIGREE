@@ -33,7 +33,7 @@ export async function callOptimizer(body: GenerateRequest): Promise<GenerateOutc
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(body.preferences.catalog_search ? 120_000 : 15_000),
     });
   } catch {
     return {kind: 'network', message: 'Optimizer could not be reached'};
@@ -44,7 +44,15 @@ export async function callOptimizer(body: GenerateRequest): Promise<GenerateOutc
       ? {kind: 'ok', data}
       : {kind: 'unavailable', message: 'Optimizer returned an invalid response'};
   }
-  const message: string = (await res.json().catch(() => null))?.error?.message ?? `Optimizer returned ${res.status}`;
+  const error = (await res.json().catch(() => null))?.error;
+  const message: string = error?.message ?? `Optimizer returned ${res.status}`;
+  if (res.status === 422 && Array.isArray(error?.details) && error.details.length) {
+    const details = error.details.filter((detail: unknown): detail is string => typeof detail === 'string');
+    console.warn('Optimizer rejected the DIG request', {requestId: body.request_id, details});
+    if (details.some((detail: string) => /^(?:courses\[\d+\]\.breadth|preferences\.(?:preferred_breadths|catalog_search|weights\.breadth)): Extra inputs are not permitted/.test(detail))) {
+      return {kind: 'unavailable', message: 'The DIG server is running an older version.'};
+    }
+  }
   return {kind: res.status === 422 ? 'validation' : 'unavailable', message};
 }
 

@@ -42,7 +42,7 @@ function AcademicProfile() {
   ];
   const picks = [v.college, v.major, v.program];
   const labels = ['College', 'Major', 'Catalog year'];
-  const placeholders = ['Choose your college', v.college === null ? 'Pick a college first' : 'Choose your major', 'When did you start?'];
+  const placeholders = ['Choose your college', v.college === null ? 'Pick a college first' : 'Choose your major', 'Choose your major’s Guide year'];
   const unavailable = ready && all.length === 0;
   const done = !!chosen || unavailable;
 
@@ -104,6 +104,7 @@ function AcademicProfile() {
               </button>
               {open && (
                 <div className="rise" style={s(isYear ? 'padding: 0 16px 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px' : 'padding: 0 10px 12px; display: flex; flex-direction: column; gap: 4px')}>
+                  {isYear && <p style={s('grid-column: 1 / -1; margin: 0; color: #5F5A55; font-size: 13px')}>Choose the UW Guide edition listed for your major in DARS.</p>}
                   {lists[i].map((option) => {
                     const on = picks[i] === option.id;
                     return (

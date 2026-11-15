@@ -203,15 +203,16 @@ function Recommendations() {
   const digging = !run || run.digging;
   const isEmpty = !digging && !!run.data && options.length === 0;
   const isError = !digging && !!run.failure;
+  const truncated = run?.data?.diagnostics.search_truncated;
   const mustCredits = run?.mustTake.reduce((total, course) => total + course.credits, 0) ?? 0;
   const choices = run ? loosenChoices(run.conditions, mustCredits) : [];
   const unverified = options.filter((option) => !option.walk).length;
 
   let title: string, sub: string;
   if (digging) { title = 'Digging…'; sub = run?.mustTake.length ? `Checking every section of ${courseList(run.mustTake.map((course) => course.code))}` : ' '; }
-  else if (isEmpty) { const count = run.data!.diagnostics.no_results_reasons.length; title = 'Nothing fits yet'; sub = count === 1 ? 'One condition blocks every combination' : count ? `${count} conditions block every combination` : 'No combination meets your conditions'; }
+  else if (isEmpty) { const count = run.data!.diagnostics.no_results_reasons.length; title = 'Nothing fits yet'; sub = truncated ? 'DIG reached its search limit before finding a match' : count === 1 ? 'One condition blocks every combination' : count ? `${count} conditions block every combination` : 'No combination meets your conditions'; }
   else if (isError) { title = run.failure!.kind === 'validation' ? 'Can’t dig yet' : 'Couldn’t reach DIG'; sub = 'Your conditions are saved'; }
-  else { title = `${plural(options.length, 'schedule')} dug up`; sub = unverified ? `${unverified} need${unverified === 1 ? 's' : ''} a walking check · swipe to compare` : options.length > 1 ? 'Swipe to compare' : 'Preview it, then save it'; }
+  else { title = `${plural(options.length, 'schedule')} dug up`; sub = truncated ? 'Best results found within the search limit' : unverified ? `${unverified} need${unverified === 1 ? 's' : ''} a walking check · swipe to compare` : options.length > 1 ? 'Swipe to compare' : 'Preview it, then save it'; }
 
   const again = (conditions = run?.conditions) => {
     if (!run || !conditions) return;

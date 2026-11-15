@@ -63,12 +63,29 @@ export function weightsFor(prefer: DigPrefer[], preferredBreadths: string[] = []
     ...(preferredBreadths.length ? {breadth: 1} : {})};
 }
 
+function indexByGroup<T>(rows: T[], key: (row: T) => string): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const id = key(row);
+    const group = groups.get(id);
+    if (group) group.push(row);
+    else groups.set(id, [row]);
+  }
+  return groups;
+}
+
 /**
  * Builds the optimizer request. Nothing about the user is included: no id, email, grades or DARS data.
  * Unknown stays unknown: eligibility is "unknown", missing scores and stats are null, and no walking
  * time is invented when the catalog has none.
  */
 export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestId: string): GenerateRequest {
+  const bundlesByCourse = indexByGroup(rows.bundles, (bundle) => bundle.course_id);
+  const meetingKey = (course: string, bundle: string) => JSON.stringify([course, bundle]);
+  const meetingsByBundle = indexByGroup(rows.meetings, (m) => meetingKey(m.course_id, m.bundle_id));
+  const statsByCourse = new Map(rows.stats.map((stat) => [stat.course_id, stat]));
+  const required = new Set(inputs.required);
+  const completed = new Set(rows.completedCourseIds);
   return {
     contract_version: '1.0',
     request_id: requestId,
@@ -84,28 +101,29 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
       max_walk_per_transition_min: null,
       exclude_full_sections: false,
     },
-    preferences: {weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths), ...(inputs.preferredBreadths?.length ? {preferred_breadths: inputs.preferredBreadths} : {})},
+    preferences: {
+      weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths),
+      ...(inputs.preferredBreadths?.length ? {preferred_breadths: inputs.preferredBreadths, catalog_search: true} : {}),
+    },
     courses: rows.courses.map((c) => {
-      const stat = rows.stats.find((s) => s.course_id === c.id);
+      const stat = statsByCourse.get(c.id);
       return {
         course_id: c.id,
         course_code: c.code,
         credit_options: c.credit_options,
-        is_required: inputs.required.includes(c.id),
+        is_required: required.has(c.id),
         eligibility_status: c.eligibility ?? 'unknown',
-        already_completed: rows.completedCourseIds.includes(c.id),
+        already_completed: completed.has(c.id),
         repeatable: c.repeatable,
         requirement_fit: null,
         breadth: c.breadth ?? null,
         grade_stats: stat ? {a_ab_rate: Number(stat.a_ab_rate), sample_size: stat.sample_size} : null,
-        section_bundles: rows.bundles
-          .filter((b) => b.course_id === c.id)
+        section_bundles: (bundlesByCourse.get(c.id) ?? [])
           .map((b) => ({
             bundle_id: b.bundle_id,
             seat_status: b.seat_status,
             instructor_score: b.instructor_score === null ? null : Number(b.instructor_score),
-            meetings: rows.meetings
-              .filter((m) => m.course_id === c.id && m.bundle_id === b.bundle_id)
+            meetings: (meetingsByBundle.get(meetingKey(c.id, b.bundle_id)) ?? [])
               .map((m) => ({day: m.day, start_min: m.start_min, end_min: m.end_min, mode: m.mode, building_id: m.building_id})),
           })),
       };

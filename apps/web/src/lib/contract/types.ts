@@ -114,6 +114,8 @@ export interface components {
             weights: components["schemas"]["Weights"];
             /** @description Catalog breadth codes to favor, without excluding other courses */
             preferred_breadths?: string[];
+            /** @description Use the full candidate pool and a larger search budget when breadth preferences are set */
+            catalog_search?: boolean;
         };
         WalkingEdge: {
             from_building_id: string;

@@ -38,3 +38,22 @@ def test_absent_preference_preserves_existing_degree_fit_shortlist():
     body["preferences"]["weights"]["degree_fit"] = 1
     results = run(body, SearchLimits(max_optional_courses=1)).results
     assert results[0].selected[-1].course_id == "other"
+
+
+def test_catalog_search_ranks_best_combination_of_late_breadth_candidates():
+    required = course("required", [bundle("required-A", [meeting("MON", 600, 650)])])
+    early = [
+        course(f"a-{i:02}", [bundle(f"a-{i:02}-A", [meeting("TUE", 600 + i, 650 + i)])],
+               is_required=False, breadth=["L"])
+        for i in range(25)
+    ]
+    late = [
+        course("z-1", [bundle("z-1-A", [meeting("MON", 660, 710)])], is_required=False, breadth=["L"]),
+        course("z-2", [bundle("z-2-A", [meeting("MON", 720, 770)])], is_required=False, breadth=["L"]),
+    ]
+    body = request([required, *early, *late], min_credits=9, max_credits=9, weights={"campus_days": 1, "breadth": 1})
+    body["preferences"].update(preferred_breadths=["L"], catalog_search=True)
+    response = run(body, SearchLimits(max_optional_courses=2))
+    assert not response.diagnostics.search_truncated
+    assert [item.course_id for item in response.results[0].selected] == ["required", "z-1", "z-2"]
+    assert response.results[0].score > response.results[1].score

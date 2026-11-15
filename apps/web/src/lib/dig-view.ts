@@ -140,7 +140,7 @@ export function describeOptions(response: DigResponse, conditions: DigConditions
 
     const campusDays = new Set(meetings.map((meeting) => meeting.day)).size;
     const firstStart = meetings.length ? Math.min(...meetings.map((meeting) => meeting.start_min)) : 0;
-    const candidates = [i === 0 ? 'Best match' : null, meetings.length && firstStart >= 720 ? 'Free mornings' : null, meetings.length && firstStart >= 630 ? 'Late start' : null, meetings.length && campusDays <= 3 ? plural(campusDays, 'day') : null];
+    const candidates = [i === 0 ? (response.diagnostics.search_truncated ? 'Best found' : 'Best match') : null, meetings.length && firstStart >= 720 ? 'Free mornings' : null, meetings.length && firstStart >= 630 ? 'Late start' : null, meetings.length && campusDays <= 3 ? plural(campusDays, 'day') : null];
     const tag = candidates.find((candidate): candidate is string => candidate !== null && !used.has(candidate)) ?? null;
     if (tag) used.add(tag);
 

@@ -917,6 +917,40 @@ export type Database = {
           },
         ];
       };
+      supplemental_program_catalog: {
+        Row: {
+          catalog_year: number;
+          course_groups: Json;
+          declaration_groups: Json;
+          fetched_at: string;
+          kind: string;
+          name: string;
+          program_key: string;
+          source_url: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          catalog_year: number;
+          course_groups: Json;
+          declaration_groups: Json;
+          fetched_at: string;
+          kind: string;
+          name: string;
+          program_key: string;
+          source_url: string;
+        };
+        Update: {
+          catalog_year?: number;
+          course_groups?: Json;
+          declaration_groups?: Json;
+          fetched_at?: string;
+          kind?: string;
+          name?: string;
+          program_key?: string;
+          source_url?: string;
+        };
+        Relationships: [];
+      };
       terms: {
         Row: {
           id: string;

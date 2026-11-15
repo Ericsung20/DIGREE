@@ -153,6 +153,9 @@ components:
           uniqueItems: true
           description: 'Catalog breadth codes to favor, without excluding other courses'
           items: {type: string, minLength: 1}
+        catalog_search:
+          type: boolean
+          description: 'Use the full candidate pool and a larger search budget when breadth preferences are set'
     WalkingEdge:
       type: object
       additionalProperties: false

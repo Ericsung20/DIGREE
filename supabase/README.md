@@ -104,6 +104,31 @@ foreach ($file in $files) {
 
 The page downloader requires PowerShell 7. Check the mapping, fetch, and extraction reports before applying batches. For a hosted import, add `--remote=<project-ref> --yes` to the apply commands. The program view identifies listed course options. Open-ended credit ranges, program exceptions and student-specific allocation remain subject to the linked UW Guide and DARS.
 
+### Import undergraduate certificates and minors
+
+Apply the supplemental program catalog migration. Reuse the four undergraduate indexes above and fetch the School of Education and department pages for each catalog year. Several official teaching minors appear only on the education pages.
+
+```powershell
+$directory = New-Item -ItemType Directory -Force supabase/.temp/supplemental-program-guides
+foreach ($year in 2023..2026) {
+    $prefix = if ($year -eq 2026) { '' } else { "/archive/$year-$($year + 1)" }
+    foreach ($department in @('education', 'education/curriculum-instruction', 'education/kinesiology', 'education/rehabilitation-psychology-special-education')) {
+        $filename = "education-$year-$($department.Replace('/','-')).html"
+        Invoke-WebRequest "https://guide.wisc.edu$prefix/undergraduate/$department/" -OutFile (Join-Path $directory.FullName $filename)
+    }
+}
+python supabase/import-uw-supplemental-programs.py map --directory $directory.FullName --indexes supabase/.temp/program-guides
+./supabase/fetch-uw-program-guides.ps1 -Directory $directory.FullName
+python supabase/import-uw-supplemental-programs.py extract --directory $directory.FullName
+if ($LASTEXITCODE -ne 0) { throw "Check extraction-issues.json before importing" }
+foreach ($file in (Get-Content (Join-Path $directory.FullName 'supplemental-files.json') -Raw | ConvertFrom-Json)) {
+    npx.cmd --yes supabase@3.1.0 db query --file $file
+    if ($LASTEXITCODE -ne 0) { throw "Supplemental program import failed at $file" }
+}
+```
+
+Each row keeps the Guide title, catalog year, source link, ordered requirements and declaration rules. Imported years follow the academic profile catalog. The source page remains authoritative for program-specific eligibility and DARS.
+
 ### Refresh published UW instructor names
 
 After applying the instructor-directory migrations, use PowerShell 7 with the term catalog manifest and requisite rows already loaded. The fetch report preserves course IDs with missing names or request failures. The generated SQL stores published names and updates matching scheduler bundles by term, course ID, and bundle ID. UW course IDs outside the planner catalog are saved in `course_instructors_source_only`.

@@ -166,10 +166,10 @@ def credit_conditions(text):
     return list(dict.fromkeys(re.findall(r"\b\d+(?:\s*[-–]\s*\d+)?\s+(?:credits?|courses?)\b", text, re.I)))
 
 
-def extract_requirements(html):
+def extract_requirements(html, *, include_conditions=False, section_id="requirementstextcontainer"):
     root = Document(html).root
     title = next((item.text().split(" < University of Wisconsin")[0] for item in root.walk() if item.tag == "title"), "")
-    content = next((item for item in root.walk() if item.attrs.get("id") == "requirementstextcontainer"), None)
+    content = next((item for item in root.walk() if item.attrs.get("id") == section_id), None)
     if content is None:
         return title, None
     headings = {}
@@ -194,6 +194,21 @@ def extract_requirements(html):
                 })
             return
         if node.tag in {"p", "li", "dd"}:
+            if include_conditions:
+                # Preserve prose rules such as minimum GPA, residency, approvals, and credit overlap.
+                # Nested list items are independent rules and keep their own rows.
+                nested = [child for child in node.children if isinstance(child, Element) and child.tag in {"p", "ul", "ol", "dl", "table"}]
+                inline = Element(node.tag)
+                inline.children = [child for child in node.children if child not in nested]
+                if label := inline.text():
+                    groups.append({
+                        "heading": " / ".join(headings.values()) or "Requirements",
+                        "rows": [{"kind": "condition", "label": label, "courses": course_references(inline),
+                                  "credit_conditions": credit_conditions(label)}],
+                    })
+                for child in nested:
+                    visit(child)
+                return
             refs = course_references(node)
             conditions = credit_conditions(node.text())
             if refs or conditions:

@@ -117,6 +117,7 @@ class Weights(ContractModel):
 class Preferences(ContractModel):
     weights: Weights
     preferred_breadths: list[Annotated[str, Field(min_length=1)]] = Field(default_factory=list, max_length=16)
+    catalog_search: bool = False
 
     @model_validator(mode="after")
     def _valid_breadths(self) -> "Preferences":

@@ -4,10 +4,11 @@ import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {useEffect, useState} from 'react';
 import {BackLink, Frame, ICON, Svg, Switch} from '@/components/dg';
+import {ProfilePrograms} from '@/components/profile-programs';
 import {signOut} from '@/components/session-gate';
 import {displayName, initials, useAccount} from '@/lib/data/account';
 import {useStore, writeStore} from '@/lib/data/local-store';
-import {useAcademicOptions} from '@/lib/data/profile';
+import {useAcademicOptions, useProfile} from '@/lib/data/profile';
 import {useRequirements} from '@/lib/data/requirements';
 import {s} from '@/lib/ui/css';
 import {plural} from '@/lib/ui/format';
@@ -36,6 +37,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const account = useAccount();
   const {colleges} = useAcademicOptions();
+  const profile = useProfile();
   const {program, percent, remaining, totals} = useRequirements();
   const notify = useStore<boolean>(NOTIFY, true);
   const [mounted, setMounted] = useState(false);
@@ -85,8 +87,10 @@ export default function ProfilePage() {
         <section className="rise" style={s('flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; animation-delay: 120ms')}>
           <h2 style={s(GROUP)}>Academic profile</h2>
           <Link href={edit} className="row" style={s(ROW + DIVIDER)}><span style={s(KEY)}>College</span><span style={s(VALUE)}>{colleges.find((college) => college.id === program?.college_id)?.label ?? '—'}</span></Link>
-          <Link href={edit} className="row" style={s(ROW + DIVIDER)}><span style={s(KEY)}>Major</span><span style={s(VALUE)}>{program?.label ?? '—'}</span></Link>
+          <Link href={edit} className="row" style={s(ROW + DIVIDER)}><span style={s(KEY)}>Primary major</span><span style={s(VALUE)}>{program?.label ?? '—'}</span></Link>
           <Link href={edit} className="row" style={s(ROW)}><span style={s(KEY)}>Catalog year</span><span style={s(VALUE)}>{year}</span></Link>
+          <p style={s('margin: -4px 16px 12px; font-size: 13px; color: #5F5A55')}>The UW Guide edition that applies to your primary major. Check your DARS for the year.</p>
+          {profile && <ProfilePrograms primaryId={profile.program_id} />}
         </section>
 
         <section className="rise" style={s('flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; animation-delay: 180ms')}>

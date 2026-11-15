@@ -1,6 +1,6 @@
 -- A request is addressed by UW NetID. Only the authenticated requester can
 -- create it, and the recipient still has to accept before either schedule is visible.
-create function public.send_friend_request(p_netid text)
+create or replace function public.send_friend_request(p_netid text)
 returns uuid
 language plpgsql security definer set search_path = ''
 as $$
@@ -32,7 +32,7 @@ end;
 $$;
 
 -- Reveal NetIDs only to people already connected by a request.
-create function public.friend_netids()
+create or replace function public.friend_netids()
 returns table (id uuid, netid text)
 language sql stable security definer set search_path = ''
 as $$
@@ -45,27 +45,9 @@ as $$
         and link.status <> 'blocked';
 $$;
 
--- An accepted friendship grants both directions full schedule access.
-create or replace function public.schedule_visibility(owner uuid, viewer uuid)
-returns public.visibility
-language sql stable security definer set search_path = ''
-as $$
-    select case
-        when viewer is distinct from auth.uid() or viewer is null then 'private'::public.visibility
-        when owner = viewer then 'full'::public.visibility
-        when exists (
-            select from public.friendships as friendship
-            where least(friendship.requester_id, friendship.receiver_id) = least(owner, viewer)
-                and greatest(friendship.requester_id, friendship.receiver_id) = greatest(owner, viewer)
-                and friendship.status = 'accepted'
-        ) then 'full'::public.visibility
-        else 'private'::public.visibility
-    end;
-$$;
-
 -- Expose only course labels and meeting times for a friend's self-reported
 -- enrollment. Grades and other course-record fields stay owner-only.
-create function public.friend_enrolled_schedule(p_owner uuid, p_term text)
+create or replace function public.friend_enrolled_schedule(p_owner uuid, p_term text)
 returns table (course_code text, meetings jsonb)
 language sql stable security definer set search_path = ''
 as $$

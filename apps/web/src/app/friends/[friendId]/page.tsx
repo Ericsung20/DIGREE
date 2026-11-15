@@ -157,7 +157,7 @@ export default function FriendSchedulePage() {
           <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 18px; height: 12px; box-sizing: border-box; border-radius: 4px; border: 1.5px dashed #1D1B1A')} />You</span>
           <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 18px; height: 12px; border-radius: 4px; background: #E3F0DA')} />Both free</span>
         </div>
-        {result && access === 'none' && <EmptyNote>{friend ? `${friend.name} hasn’t saved a schedule yet.` : 'This schedule isn’t available.'}</EmptyNote>}
+        {result && access === 'none' && <EmptyNote>This schedule isn’t available to you.</EmptyNote>}
         {result && access !== 'none' && items.length === 0 && <EmptyNote>{friend?.name ?? 'Your friend'} hasn’t saved a schedule for {termLabel} yet.</EmptyNote>}
       </main>
     </Frame>

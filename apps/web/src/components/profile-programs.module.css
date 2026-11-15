@@ -1,0 +1,112 @@
+.programs {
+  padding: 12px 16px 16px;
+  border-top: 1px solid #f1eeea;
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #f7f4f0;
+  border-radius: 14px;
+}
+
+.meta {
+  display: block;
+  color: #5f5a55;
+  font-size: 13px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.actions button, .remove {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #e4dcd6;
+  border-radius: 14px;
+  background: #fff;
+  color: #8c1d2b;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.remove {
+  border: none;
+  background: transparent;
+  padding: 0 4px;
+}
+
+.actions button[aria-expanded="true"] {
+  border-color: #8c1d2b;
+  background: #f8eeef;
+}
+
+.actions .save {
+  background: #8c1d2b;
+  border-color: #8c1d2b;
+  color: #fff;
+}
+
+.editor {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 16px;
+  background: #f7f4f0;
+}
+
+.editor h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.editor fieldset {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.editor label {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.editor :is(select, input) {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #d8d0c9;
+  border-radius: 10px;
+  background: #fff;
+  color: #1d1b1a;
+  font: inherit;
+}
+
+.editor p, .error {
+  margin: 0;
+  font-size: 13px;
+}
+
+.error {
+  margin-top: 8px;
+  color: #8c1d2b;
+}

@@ -48,7 +48,7 @@ export default function FriendsPage() {
   async function send() {
     try {
       const failure = await sendFriendRequest(input);
-      setNote(failure ? {text: failure, error: true} : {text: 'Request sent. You can see each other’s schedules after they accept.', error: false});
+      setNote(failure ? {text: failure, error: true} : {text: 'Request sent. It’s pending until they accept.', error: false});
       if (!failure) setInput('');
     } catch {
       setNote({text: 'Couldn’t send the request. Try again.', error: true});
@@ -114,7 +114,7 @@ export default function FriendsPage() {
             return (
               <Link key={friend.id} href={`/friends/${encodeURIComponent(friend.id)}`} className={friend.id === fresh ? 'row pop' : 'row'} style={s(ROW)}>
                 <Avatar id={friend.id} name={friend.name} size={46} />
-                <span style={s('flex: 1; display: flex; flex-direction: column')}><span style={s('font-size: 16px; font-weight: 900')}>{friend.name}</span><span style={s('font-size: 13px; font-weight: 700; color: #5F5A55')}>{friend.id === fresh ? 'Just added' : 'Schedule available'}</span></span>
+                <span style={s('flex: 1; display: flex; flex-direction: column')}><span style={s('font-size: 16px; font-weight: 900')}>{friend.name}</span>{friend.id === fresh && <span style={s('font-size: 13px; font-weight: 700; color: #5F5A55')}>Just added</span>}</span>
                 <Svg size={18} sw={2.6} stroke="#8A847E">{ICON.right}</Svg>
               </Link>
             );

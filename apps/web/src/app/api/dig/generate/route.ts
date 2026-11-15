@@ -4,6 +4,8 @@ import {generateSchedules, usesFixtureRequest} from '@/lib/optimizer';
 
 const STATUS = {validation: 422, unavailable: 503, network: 502} as const;
 
+export const maxDuration = 150;
+
 // BFF endpoint for the DIG screens. `?mock=empty|422|503|network` only has an effect when DIGREE_MOCK=1.
 export async function POST(request: Request) {
   const inputs: unknown = await request.json().catch(() => null); // validated in generateSchedules

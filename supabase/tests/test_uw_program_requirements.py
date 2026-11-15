@@ -50,6 +50,22 @@ class ProgramRequirementsTest(unittest.TestCase):
         self.assertEqual(groups[1]["rows"][0]["kind"], "reference")
         self.assertEqual(len(groups), 2)
 
+    def test_supplemental_catalog_preserves_non_course_rules_and_declaration(self):
+        html = """
+        <title>Teaching, Minor &lt; University of Wisconsin-Madison</title>
+        <div id="howtogetintextcontainer"><h2>How to Get In</h2><p>Elementary Education students only.</p></div>
+        <div id="requirementstextcontainer"><h2>Requirements</h2>
+          <ul><li>Minimum GPA of 2.75.<ul><li>At least 6 credits in residence.</li></ul></li></ul>
+        </div>
+        """
+        title, requirements = catalog.extract_requirements(html, include_conditions=True)
+        self.assertEqual(title, "Teaching, Minor")
+        self.assertEqual([group["rows"][0]["label"] for group in requirements],
+                         ["Minimum GPA of 2.75.", "At least 6 credits in residence."])
+        self.assertEqual(requirements[1]["rows"][0]["credit_conditions"], ["6 credits"])
+        _, declaration = catalog.extract_requirements(html, include_conditions=True, section_id="howtogetintextcontainer")
+        self.assertEqual(declaration[0]["rows"][0]["label"], "Elementary Education students only.")
+
 
 if __name__ == "__main__":
     unittest.main()

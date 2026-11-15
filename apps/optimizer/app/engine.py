@@ -10,7 +10,9 @@ reject combinations; unknown data marks a schedule needs_review instead of
 being guessed at.
 """
 
-from collections import Counter
+from bisect import insort
+from collections import Counter, deque
+from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import pairwise
 from math import prod
@@ -127,10 +129,15 @@ def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) ->
 
     optional_needed = _optional_courses_needed(request, required)
     usable = _usable_optional_courses(request) if optional_needed else []
-    pool = usable[: limits.max_optional_courses]
+    catalog_search = bool(request.preferences.catalog_search and request.preferences.preferred_breadths and usable)
+    pool = usable if catalog_search else usable[: limits.max_optional_courses]
 
     plan = _scoring_plan(request.preferences.weights, required, [course for _, course in usable], request.preferences.preferred_breadths)
-    search = _Search(request, pool, plan, limits.max_search_steps)
+    search = _Search(
+        request, pool, plan,
+        limits.max_catalog_search_steps if catalog_search else limits.max_search_steps,
+        catalog_search=catalog_search,
+    )
     search.run()
 
     # Either limit leaves combinations unexamined, so nothing below may be
@@ -140,9 +147,8 @@ def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) ->
     if truncated:
         notices["search_incomplete"] = messages.search_incomplete()
 
-    ranked = sorted(search.candidates, key=_Candidate.sort_key)[: request.top_k]
     results = [
-        _to_result(rank, candidate, notices) for rank, candidate in enumerate(ranked, start=1)
+        _to_result(rank, candidate, notices) for rank, candidate in enumerate(search.candidates, start=1)
     ]
 
     occurred = [reason for reason in REJECTION_REASONS if search.rejected[reason] > 0]
@@ -304,11 +310,15 @@ class _Search:
         pool: list[tuple[int, CandidateCourse]],
         plan: _ScoringPlan,
         max_steps: int,
+        *,
+        catalog_search: bool,
     ):
         self._constraints = request.constraints
         self._walk_minutes = walking_minutes_by_pair(request.walking_edges)
         self._plan = plan
         self._max_steps = max_steps
+        self._top_k = request.top_k
+        self._catalog_search = catalog_search
 
         required = [
             self._slot(index, course)
@@ -319,21 +329,21 @@ class _Search:
         # Then the optional pool in its own order (preferred breadth, then degree fit).
         required.sort(key=lambda s: (len(s.course.section_bundles), s.request_index))
         self._slots = required + [self._slot(index, course) for index, course in pool]
+        self._required_count = len(required)
 
         # Per depth: how many complete combinations, and how many credits,
         # the courses from that depth onward can still contribute. An optional
         # course may be left out, so it contributes no minimum.
         count = len(self._slots)
-        self._completions_from = [
+        self._completions_from = [] if catalog_search else [
             prod(s.choices for s in self._slots[d:]) for d in range(count + 1)
         ]
-        self._min_credits_from = [
-            sum(s.credit_options[0] for s in self._slots[d:] if s.course.is_required)
-            for d in range(count + 1)
-        ]
-        self._max_credits_from = [
-            sum(s.credit_options[-1] for s in self._slots[d:]) for d in range(count + 1)
-        ]
+        self._min_credits_from = [0] * (count + 1)
+        self._max_credits_from = [0] * (count + 1)
+        for i in range(count - 1, -1, -1):
+            slot = self._slots[i]
+            self._min_credits_from[i] = self._min_credits_from[i + 1] + (slot.credit_options[0] if slot.course.is_required else 0)
+            self._max_credits_from[i] = self._max_credits_from[i + 1] + slot.credit_options[-1]
 
         self.steps = 0
         self.stopped_early = False
@@ -351,9 +361,110 @@ class _Search:
 
     def run(self) -> None:
         try:
-            self._descend(0, 0, [])
+            if self._catalog_search:
+                self._run_catalog()
+            else:
+                self._descend(0, 0, [])
         except _StepLimitReached:
             self.stopped_early = True
+
+    def _run_catalog(self) -> None:
+        # Interleave required section combinations as well as the first optional
+        # course. This lets late catalog entries start competing early.
+        required = self._required_selections(0, 0, [])
+        active: deque[Iterator[None]] = deque()
+        while active or required is not None:
+            if required is not None and len(active) < 16:
+                selection = next(required, None)
+                if selection is None:
+                    required = None
+                else:
+                    credits, chosen = selection
+                    active.append(self._catalog_rounds(credits, chosen))
+            if active:
+                branch = active.popleft()
+                if self._advance(branch, 256):
+                    active.append(branch)
+
+    @staticmethod
+    def _advance(branch: Iterator[None], steps: int) -> bool:
+        for _ in range(steps):
+            try:
+                next(branch)
+            except StopIteration:
+                return False
+        return True
+
+    def _required_selections(
+        self, depth: int, credits: int, chosen: list[_Choice]
+    ) -> Iterator[tuple[int, tuple[_Choice, ...]]]:
+        if depth == self._required_count:
+            yield credits, tuple(chosen)
+            return
+        for choice in self._catalog_placements(depth, credits, chosen):
+            if choice is not None:
+                chosen.append(choice)
+                yield from self._required_selections(depth + 1, credits + choice.credits, chosen)
+                chosen.pop()
+
+    def _catalog_rounds(self, credits: int, chosen: tuple[_Choice, ...]) -> Iterator[None]:
+        branches = deque(
+            self._catalog_branch(i, credits, list(chosen))
+            for i in range(self._required_count, len(self._slots))
+        )
+        while branches:
+            branch = branches.popleft()
+            for _ in range(8):
+                try:
+                    next(branch)
+                except StopIteration:
+                    break
+                yield
+            else:
+                branches.append(branch)
+
+    def _catalog_branch(self, index: int, credits: int, chosen: list[_Choice]) -> Iterator[None]:
+        for choice in self._catalog_placements(index, credits, chosen):
+            yield
+            if choice is None:
+                continue
+            total = credits + choice.credits
+            chosen.append(choice)
+            if total >= self._constraints.min_credits:
+                self._step()
+                self._evaluate_complete(total, chosen)
+                yield
+            # Enumerate only selected courses and only in increasing slot order.
+            # Depth depends on credits, so large catalogs do not grow the call stack.
+            if total < self._constraints.max_credits:
+                for next_index in range(index + 1, len(self._slots)):
+                    if total + self._max_credits_from[next_index] < self._constraints.min_credits:
+                        break
+                    yield from self._catalog_branch(next_index, total, chosen)
+            chosen.pop()
+
+    def _catalog_placements(
+        self, index: int, credits: int, chosen: list[_Choice]
+    ) -> Iterator[_Choice | None]:
+        slot = self._slots[index]
+        constraints = self._constraints
+        for added in slot.credit_options:
+            total = credits + added
+            if (total + self._min_credits_from[index + 1] > constraints.max_credits
+                or total + self._max_credits_from[index + 1] < constraints.min_credits):
+                self._step()
+                self._reject("credits_out_of_range", 1)
+                yield None
+                continue
+            for bundle, violation in zip(slot.course.section_bundles, slot.bundle_violations):
+                self._step()
+                if violation is None and any(_bundles_overlap(bundle, item.bundle) for item in chosen):
+                    violation = "time_overlap"
+                if violation is not None:
+                    self._reject(violation, 1)
+                    yield None
+                else:
+                    yield _Choice(slot.request_index, slot.course, bundle, added)
 
     def _step(self) -> None:
         """One unit of search work. Counting steps, not seconds, keeps a capped
@@ -509,17 +620,23 @@ class _Search:
         )
         review_warnings = _review_warnings(choices, unknown_pairs, online_beside_in_person)
         data_values, advisories = self._data_factors(choices)
-        self.candidates.append(
-            _Candidate(
-                choices=choices,
-                metrics=metrics,
-                review_warnings=review_warnings,
-                advisories=advisories,
-                status=messages.status_for(list(review_warnings)),
-                travel_complete=travel_complete,
-                score=schedule_score(metrics, self._plan.weights, travel_complete, data_values),
-            )
+        candidate = _Candidate(
+            choices=choices,
+            metrics=metrics,
+            review_warnings=review_warnings,
+            advisories=advisories,
+            status=messages.status_for(list(review_warnings)),
+            travel_complete=travel_complete,
+            score=schedule_score(metrics, self._plan.weights, travel_complete, data_values),
         )
+        if len(self.candidates) < self._top_k or self._rank_key(candidate) < self._rank_key(self.candidates[-1]):
+            insort(self.candidates, candidate, key=self._rank_key)
+            if len(self.candidates) > self._top_k:
+                self.candidates.pop()
+
+    def _rank_key(self, candidate: _Candidate) -> tuple:
+        review, score, selection = candidate.sort_key()
+        return (score, review, selection) if self._catalog_search else (review, score, selection)
 
     def _data_factors(self, choices: tuple[_Choice, ...]) -> tuple[dict[str, float], dict[str, str]]:
         """Values of the compared data-driven factors, and notes on what was missing.

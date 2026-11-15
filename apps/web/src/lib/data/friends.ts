@@ -5,7 +5,7 @@ import type {Meeting} from './catalog';
 import {getRemote, readStore, setRemote, useRemote, useStore, writeStore} from './local-store';
 import {readScheduleItems, SAVED_ITEMS} from './saved-schedules';
 
-// A pending request grants no schedule access. Acceptance grants full access both ways.
+// A pending request grants no schedule access. The database checks sharing permissions after acceptance.
 
 export type Friend = {
   /** Mock: a local NetID. Real: the other account's UUID. */
@@ -83,7 +83,7 @@ export async function loadFriendSchedule(friend: Friend, term: string | null): P
   const {data: enrolled, error: enrolledError} = await db.rpc('friend_enrolled_schedule', {p_owner: friend.id, p_term: term});
   if (enrolledError) return {access: 'none'};
   if (enrolled?.length) return {access: 'full', items: (enrolled as {course_code: string; meetings: Slot[]}[]).map((row) => ({label: row.course_code, meetings: row.meetings}))};
-  // RLS lets an accepted friend read the owner's saved schedules and items.
+  // RLS enforces the owner's full sharing permission on saved schedules and items.
   const {data: schedule, error: scheduleError} = await db.from('saved_schedules')
     .select(`saved_schedule_items!inner(${SAVED_ITEMS})`).eq('user_id', friend.id).eq('term', term).eq('mode', 'planned')
     .order('name', {ascending: false}).order('id').limit(1).maybeSingle();
@@ -102,6 +102,7 @@ export async function sendFriendRequest(input: string): Promise<string | null> {
     return null;
   }
   const {data, error} = await supabase().rpc('send_friend_request', {p_netid: clean});
+  if (error?.code === 'PGRST202') return 'Friend requests are temporarily unavailable. Try again later.';
   if (error) return error.message;
   put([...all(), {id: data as string, name: clean, status: 'outgoing'}]);
   return null;
