@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "digree-optimizer"
+version = "0.1.0"
+description = "DIGREE scheduling optimizer API (contract v1.0)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.163.0",
+    "pydantic==2.14.3",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "httpx2==2.16.0",
+    "PyYAML==6.0.3",
+]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
