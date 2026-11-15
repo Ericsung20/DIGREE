@@ -68,4 +68,6 @@ The cloud catalog includes UW public search data for Spring 2027 (term `1274`). 
 
 Historical grade aggregates come from MadEnroll. They describe past letter grades across the provider's reported coverage, so display the range and sample size with the ratio. See [README.md](./README.md) for the term importer.
 
-The cloud term has no current-term flag. Assign a current term before enabling course chat in a hosted app. The local fixture includes a synthetic walking matrix. Live campus routes stay unknown until a route source is available. Send an empty set of walking edges where none are known. RMP ratings require an authorized source, so live `instructor_score` is null.
+The cloud term has no current-term flag. Assign a current term before enabling course chat in a hosted app. The Spring 2027 cloud catalog contains 9,312 directed walking estimates across 97 routable buildings as of November 15, 2026. The OFF CAMPUS location has no exact address, and SPORTS CTR identifies the demolished Camp Randall Memorial Sports Center. Their pairs remain unknown.
+
+The local fixture includes a synthetic walking matrix. For the live UW catalog, filter `walking_edges` by the building IDs in the request, paginate through all matches, and forward the stored directions and minutes. Estimates come from OpenStreetMap pedestrian paths using Valhalla. A missing pair is unknown and needs review. Display [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright) with the estimates. RMP ratings require an authorized source, so live `instructor_score` is null.
