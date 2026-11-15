@@ -1,0 +1,198 @@
+{
+  "contract_version": "1.0",
+  "request_id": "demo-001",
+  "term": "2027SP",
+  "top_k": 3,
+  "constraints": {
+    "min_credits": 10,
+    "max_credits": 10,
+    "earliest_start_min": 600,
+    "latest_end_min": 1080,
+    "blocked_days": [],
+    "walking_buffer_min": 3,
+    "max_walk_per_transition_min": 30,
+    "exclude_full_sections": false
+  },
+  "preferences": {
+    "weights": {
+      "walking": 1,
+      "idle_gap": 0,
+      "campus_days": 0,
+      "grade_outcomes": 0,
+      "degree_fit": 0,
+      "instructor": 0
+    }
+  },
+  "courses": [
+    {
+      "course_id": "cs400",
+      "course_code": "COMP SCI 400",
+      "credit_options": [
+        3
+      ],
+      "is_required": true,
+      "eligibility_status": "eligible",
+      "already_completed": false,
+      "repeatable": false,
+      "requirement_fit": null,
+      "grade_stats": null,
+      "section_bundles": [
+        {
+          "bundle_id": "cs400-A",
+          "seat_status": "open",
+          "instructor_score": null,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 600,
+              "end_min": 650,
+              "mode": "in_person",
+              "building_id": "ALPHA"
+            },
+            {
+              "day": "WED",
+              "start_min": 600,
+              "end_min": 650,
+              "mode": "in_person",
+              "building_id": "ALPHA"
+            }
+          ]
+        },
+        {
+          "bundle_id": "cs400-B",
+          "seat_status": "open",
+          "instructor_score": null,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            },
+            {
+              "day": "WED",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "course_id": "math234",
+      "course_code": "MATH 234",
+      "credit_options": [
+        4
+      ],
+      "is_required": true,
+      "eligibility_status": "eligible",
+      "already_completed": false,
+      "repeatable": false,
+      "requirement_fit": null,
+      "grade_stats": null,
+      "section_bundles": [
+        {
+          "bundle_id": "math234-A",
+          "seat_status": "open",
+          "instructor_score": null,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "BETA"
+            },
+            {
+              "day": "WED",
+              "start_min": 660,
+              "end_min": 710,
+              "mode": "in_person",
+              "building_id": "BETA"
+            }
+          ]
+        },
+        {
+          "bundle_id": "math234-B",
+          "seat_status": "open",
+          "instructor_score": null,
+          "meetings": [
+            {
+              "day": "MON",
+              "start_min": 720,
+              "end_min": 770,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            },
+            {
+              "day": "WED",
+              "start_min": 720,
+              "end_min": 770,
+              "mode": "in_person",
+              "building_id": "GAMMA"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "course_id": "stat240",
+      "course_code": "STAT 240",
+      "credit_options": [
+        3
+      ],
+      "is_required": true,
+      "eligibility_status": "eligible",
+      "already_completed": false,
+      "repeatable": false,
+      "requirement_fit": null,
+      "grade_stats": null,
+      "section_bundles": [
+        {
+          "bundle_id": "stat240-A",
+          "seat_status": "open",
+          "instructor_score": null,
+          "meetings": [
+            {
+              "day": "TUE",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            },
+            {
+              "day": "THU",
+              "start_min": 600,
+              "end_min": 675,
+              "mode": "in_person",
+              "building_id": "DELTA"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "walking_edges": [
+    {
+      "from_building_id": "ALPHA",
+      "to_building_id": "BETA",
+      "minutes": 6,
+      "bidirectional": true
+    },
+    {
+      "from_building_id": "ALPHA",
+      "to_building_id": "GAMMA",
+      "minutes": 18,
+      "bidirectional": true
+    },
+    {
+      "from_building_id": "BETA",
+      "to_building_id": "GAMMA",
+      "minutes": 12,
+      "bidirectional": true
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+@theme {
+  /* Single accent, used for the DIG tab and focus rings. Placeholder until the visual design lands. */
+  --color-accent: #c5050c;
+}
