@@ -1,3 +1,4 @@
+import {useEffect, useState} from 'react';
 import {IS_MOCK, supabase} from '../supabase';
 import {getRemote, readStore, setRemote, useRemote, useStore, writeStore} from './local-store';
 
@@ -10,6 +11,8 @@ export const FLAIRS = {
   review: 'Review',
 } as const;
 export type Flair = keyof typeof FLAIRS;
+/** The three kinds a new post can be, in the order the composer and the feed filters show them. */
+export const POST_TYPES: Flair[] = ['question', 'review', 'tip'];
 export type Post = {id: string; course_id: string | null; category: string; title?: string | null; body: string; public_alias: string; created_at: string; mine: boolean; reported: boolean};
 export type Comment = {id: string; post_id: string; parent_id?: string | null; body: string; public_alias: string; created_at: string; mine: boolean};
 export const postTitle = (post: Post) => post.title ?? post.body.trim().split('\n', 1)[0].slice(0, 100);
@@ -134,10 +137,10 @@ export async function deletePost({id, mine}: Post): Promise<string | null> {
   return null;
 }
 
-export async function reportPost(id: string): Promise<string | null> {
+export async function reportPost(id: string, reason = 'Reported from the app'): Promise<string | null> {
   if (!IS_MOCK) {
     // Reports are insert-only for clients: no returning selection.
-    const {error} = await supabase().from('post_reports').insert({post_id: id, reason: 'Reported from the app'});
+    const {error} = await supabase().from('post_reports').insert({post_id: id, reason});
     if (error) return error.message;
     remember(REPORTED_KEY, id);
     setRemote(`post:${id}`, null);
@@ -185,4 +188,45 @@ export async function setVote(id: string, value: -1 | 0 | 1): Promise<string | n
     setRemote(`vote:${id}`, data as Vote);
   }
   return null;
+}
+
+/** Vote score, my own vote and comment count for the posts on screen. */
+export type PostStats = Record<string, {score: number; my_vote: number; comments: number}>;
+const NO_STATS: PostStats = {};
+
+async function loadPostStats(ids: string[]): Promise<PostStats> {
+  if (!ids.length) return NO_STATS;
+  if (IS_MOCK) {
+    const all = readStore(COMMENTS_KEY, SEED_COMMENTS);
+    return Object.fromEntries(ids.map((id) => [id, {...readStore(`vote:${id}`, NO_VOTE), comments: all.filter((comment) => comment.post_id === id).length}]));
+  }
+  const db = supabase();
+  const [votes, replies] = await Promise.all([
+    db.rpc('community_vote_totals', {p_ids: ids}),
+    db.from('community_comments').select('post_id').in('post_id', ids).limit(2000),
+  ]);
+  if (votes.error) throw votes.error;
+  if (replies.error) throw replies.error;
+  const stats: PostStats = Object.fromEntries(ids.map((id) => [id, {score: 0, my_vote: 0, comments: 0}]));
+  for (const vote of votes.data as (Vote & {post_id: string})[]) if (stats[vote.post_id]) Object.assign(stats[vote.post_id], {score: vote.score, my_vote: vote.my_vote});
+  for (const reply of replies.data as {post_id: string}[]) if (stats[reply.post_id]) stats[reply.post_id].comments++;
+  return stats;
+}
+
+/** Loaded each time a screen opens, so a vote or comment made on the post screen shows up in the feed. */
+export function usePostStats(ids: string[]): PostStats {
+  const key = [...new Set(ids)].sort().join(',');
+  const [loaded, setLoaded] = useState<{key: string; stats: PostStats}>({key: '', stats: NO_STATS});
+  useEffect(() => {
+    let active = true;
+    loadPostStats(key ? key.split(',') : [])
+      .then((stats) => {
+        if (active) setLoaded({key, stats});
+      })
+      .catch((error) => console.error('Loading post votes failed', error));
+    return () => {
+      active = false;
+    };
+  }, [key]);
+  return loaded.stats;
 }

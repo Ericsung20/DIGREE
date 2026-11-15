@@ -1,121 +1,199 @@
 'use client';
 
 import Link from 'next/link';
+import {useRouter} from 'next/navigation';
 import {useEffect, useRef, useState} from 'react';
-import {EmptyState, Screen, field, secondary} from '@/components/screen';
-import {useCourseRecords, useGrades} from '@/lib/data/course-records';
-import {removeDarsProgress, saveDarsProgress, useDarsProgress} from '@/lib/data/degree-progress';
-import {useAcademicOptions, useProfile} from '@/lib/data/profile';
+import {BackLink, EmptyNote, Frame, ICON, Spade, Svg} from '@/components/dg';
+import {currentTermOf, findCoursesByCodes, previousTermOf, useTerms, type CourseHit} from '@/lib/data/catalog';
+import {addCourseRecord, useCourseRecords} from '@/lib/data/course-records';
+import {digTerm} from '@/lib/data/dig-session';
+import {useRequirements, type RequirementGroup} from '@/lib/data/requirements';
+import {readDars, type DarsCourse} from '@/lib/dars';
+import {s} from '@/lib/ui/css';
 
-const UW_GUIDE = 'https://guide.wisc.edu/undergraduate/';
-const CS_GUIDE = 'https://guide.wisc.edu/undergraduate/letters-science/computer-sciences/computer-sciences-bs/';
+const CSS = `
+button{font:inherit}
+a{color:#8C1D2B}a:hover{color:#6F1622}
+@keyframes fadeUp{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:none}}
+@keyframes dig{0%,100%{transform:rotate(0) translateY(0)}30%{transform:rotate(-18deg) translateY(4px)}60%{transform:rotate(10deg) translateY(-2px)}}
+.rise{animation:fadeUp 400ms cubic-bezier(.2,.9,.25,1) both}
+.digging{animation:dig 600ms ease-in-out infinite;transform-origin:50% 90%}
+.press{transition:transform 160ms ease}
+.press:active{transform:scale(.96)}
+`;
 
-function DarsChecklist({programId}: {programId: string}) {
-  const items = useDarsProgress(programId);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function save(action: () => Promise<string | null>, onSaved?: () => void) {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const message = await action();
-      if (message) setError(message);
-      else onSaved?.();
-    } catch {
-      setError('Couldn’t save your degree progress.');
-    } finally {setBusy(false);}
-  }
-  return <section className="surface mt-3 space-y-3">
-    <h2 className="section-title">Requirements from your report</h2>
-    <p className="text-sm text-neutral-600">Enter a requirement and its remaining credits as shown in DARS. These entries are private to your account.</p>
-    <ul className="divide-y divide-neutral-200">
-      {items.map((item) => <li key={item.requirement_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-        <span className="wrap-anywhere"><strong>{item.requirement_id}</strong> · {item.credits_remaining} cr remaining</span>
-        <button type="button" className="text-accent" disabled={busy} onClick={() => void save(() => removeDarsProgress(programId, item.requirement_id))}>Remove</button>
-      </li>)}
-    </ul>
-    <form className="space-y-3" onSubmit={(event) => {
-      event.preventDefault();
-      const form = event.currentTarget;
-      const values = new FormData(form);
-      void save(() => saveDarsProgress(programId, {requirement_id: String(values.get('requirement')), credits_remaining: Number(values.get('remaining'))}), () => form.reset());
-    }}>
-      <label className="block text-sm font-extrabold">Requirement <input name="requirement" className={field} maxLength={120} required /></label>
-      <label className="block text-sm font-extrabold">Credits remaining <input name="remaining" className={field} type="number" min={0} max={200} required /></label>
-      <button className={secondary} type="submit" disabled={busy}>Save requirement</button>
-    </form>
-    {error && <p role="alert" className="text-sm text-accent">{error}</p>}
-  </section>;
-}
+const tab = (on: boolean) => `position: relative; z-index: 1; height: 42px; border: none; background: transparent; font-size: 14px; font-weight: 900; cursor: pointer; transition: color 260ms ease; color: ${on ? '#1D1B1A' : '#6E6863'}`;
+const CHIP = 'height: 34px; padding: 0 12px; box-sizing: border-box; border-radius: 17px; font-size: 13px; font-weight: 900; display: inline-flex; align-items: center; ';
+const READING_MS = 1400; // the progress bar fills for at least this long, as on the design
+type Difference = {course: CourseHit; taken: DarsCourse};
 
 export default function RequirementsPage() {
-  const profile = useProfile();
-  const {programs} = useAcademicOptions();
+  const router = useRouter();
+  const {program, groups} = useRequirements();
+  const terms = useTerms();
   const records = useCourseRecords();
-  const grades = useGrades();
-  const [mode, setMode] = useState<'courses' | 'dars'>('courses');
-  const [documentUrl, setDocumentUrl] = useState('');
-  const [error, setError] = useState('');
-  const fileRequest = useRef(0);
-  useEffect(() => () => {if (documentUrl) URL.revokeObjectURL(documentUrl);}, [documentUrl]);
-  const program = programs.find((item) => item.id === profile?.program_id);
-  const completed = records.filter((item) => item.status === 'completed' && grades[item.id] !== 'F');
-  const credits = completed.reduce((total, item) => total + item.credits, 0);
-  const isCurrentCs = program?.label === 'Computer Sciences, BS' && program.catalog_year === 2026;
-  const source = program && program.catalog_year < 2026 ? 'https://guide.wisc.edu/archive/' : isCurrentCs ? CS_GUIDE : UW_GUIDE;
+  const [src, setSrc] = useState<'a' | 'b'>('a');
+  const [opened, setOpened] = useState<number | null | undefined>(undefined);
+  const [b, setB] = useState<'idle' | 'reading' | 'review' | 'unreadable'>('idle');
+  const [fileName, setFileName] = useState('');
+  const [read, setRead] = useState(0);
+  const [diffs, setDiffs] = useState<Difference[]>([]);
+  const [resolved, setResolved] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState<string | null>(null);
+  const picker = useRef<HTMLInputElement>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearInterval(timer.current), []);
+
+  const A = src === 'a';
+  const firstOpen = groups.findIndex((group) => !group.done);
+  const open = opened === undefined ? (firstOpen >= 0 ? firstOpen : null) : opened;
+
+  async function digWith(group: RequirementGroup) {
+    const term = digTerm(terms, null);
+    const needed = group.items.filter((item) => item.state === 'n' && item.courseCode).map((item) => item.courseCode!);
+    try {
+      for (const course of await findCoursesByCodes(needed)) {
+        if (records.some((record) => record.term === term && record.course_id === course.id)) continue;
+        await addCourseRecord({term, course_id: course.id, course_code: course.code, credits: course.credit_options[0], status: 'planned', bundle_id: null, counts_toward_major: false, source: 'manual'}, currentTermOf(terms));
+      }
+    } catch (failure) {
+      console.error('Adding the courses to DIG failed', failure);
+    }
+    router.push(`/dig?term=${encodeURIComponent(term)}`);
+  }
+
+  async function choose(file: File | undefined) {
+    if (!file) return;
+    setFileName(file.name);
+    setB('reading');
+    setRead(0);
+    setResolved({});
+    setError(null);
+    const start = Date.now();
+    window.clearInterval(timer.current);
+    timer.current = window.setInterval(() => setRead(Math.min(1, (Date.now() - start) / READING_MS)), 40);
+    let next: 'review' | 'unreadable' = 'unreadable';
+    try {
+      const reading = await readDars(file);
+      if (reading.readable) {
+        // Only courses the catalog knows and the history lacks are worth asking about.
+        const known = await findCoursesByCodes(reading.courses.map((course) => course.code));
+        const have = new Set(records.filter((record) => record.status === 'completed' || record.status === 'enrolled_self_reported').map((record) => record.course_id));
+        setDiffs(known.filter((course) => !have.has(course.id)).map((course) => ({course, taken: reading.courses.find((item) => item.code === course.code)!})));
+        next = 'review';
+      }
+    } catch (failure) {
+      console.error('Reading the DARS report failed', failure);
+    }
+    window.setTimeout(() => {
+      window.clearInterval(timer.current);
+      setB(next);
+    }, Math.max(0, READING_MS - (Date.now() - start)));
+  }
+
+  async function acceptDars({course, taken}: Difference) {
+    const term = terms.find((item) => item.label === `${taken.season} ${taken.year}`)?.id ?? previousTermOf(terms);
+    if (!term) return setError('There’s no semester to file this course under yet.');
+    const failure = await addCourseRecord({term, course_id: course.id, course_code: course.code, credits: course.credit_options[0], status: 'completed', bundle_id: null, counts_toward_major: false, source: 'manual'}, currentTermOf(terms));
+    if (failure) setError(failure);
+    else setResolved((current) => ({...current, [course.id]: true}));
+  }
+
+  const left = diffs.filter((difference) => !resolved[difference.course.id]).length;
+
   return (
-    <Screen title="Degree requirements" back={{href: '/profile', label: 'Back to profile'}}
-      description={program ? `${program.label} · ${program.catalog_year}–${String(program.catalog_year + 1).slice(-2)} Guide` : undefined}>
-      <div role="group" aria-label="Review source" className="mb-3 flex flex-wrap gap-2">
-        <button type="button" className="choice-chip" aria-pressed={mode === 'courses'} onClick={() => setMode('courses')}>From my courses</button>
-        <button type="button" className="choice-chip" aria-pressed={mode === 'dars'} onClick={() => setMode('dars')}>From DARS PDF</button>
-      </div>
-      {mode === 'courses' ? <>
-        {!program ? <EmptyState title="Choose your program" body="Set your major and catalog year in Profile." /> : (
-          <section className="surface space-y-3">
-            <h2 className="section-title">University credit minimum</h2>
-            <p><strong>{credits} credits reported</strong> · {Math.max(0, 120 - credits)} to reach 120</p>
-            <progress aria-label="Reported credits toward the university minimum" className="h-3 w-full accent-accent" max={120} value={Math.min(credits, 120)} />
-            <p className="text-sm text-neutral-600">This estimate uses the completed courses you entered. Use DARS to confirm transfer credits, residency, and your full degree and general education requirements.</p>
-            <a className="text-sm font-extrabold text-accent underline" href={source}>Open UW Guide requirements</a>
+    <Frame css={CSS} numeric>
+      <header style={s('flex-shrink: 0; padding: 8px 20px 4px 10px; display: flex; flex-direction: column; gap: 10px')}>
+        <div style={s('display: flex; align-items: center; height: 44px')}>
+          <BackLink href="/profile" label="Back to profile" />
+        </div>
+        <div style={s('padding-left: 10px; display: flex; flex-direction: column; gap: 2px')}>
+          <h1 style={s('margin: 0; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>What’s left</h1>
+          <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{program ? `${program.label} · ${program.catalog_year}–${String(program.catalog_year + 1).slice(-2)} catalog` : 'Based on the courses you’ve entered'}</span>
+        </div>
+        <div role="tablist" aria-label="Source" style={s('margin-left: 10px; position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px; border-radius: 22px; background: #ECE8E3')}>
+          <span aria-hidden="true" style={s(`position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 18px; background: #FFFFFF; box-shadow: 0 2px 8px rgba(40,20,20,0.10); transition: transform 380ms cubic-bezier(.2,.9,.25,1.15); transform: translateX(${A ? '0' : '100%'})`)} />
+          <button type="button" role="tab" aria-selected={A} onClick={() => setSrc('a')} style={s(tab(A))}>From my courses</button>
+          <button type="button" role="tab" aria-selected={!A} onClick={() => setSrc('b')} style={s(tab(!A))}>From DARS PDF</button>
+        </div>
+      </header>
+
+      <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 12px 20px 24px; display: flex; flex-direction: column; gap: 8px')}>
+        {A && groups.map((group, i) => {
+          const isOpen = open === i;
+          return (
+            <section key={group.name} className="rise" style={s(`flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; transition: box-shadow 260ms ease; animation-delay: ${i * 50}ms; box-shadow: ${isOpen ? '0 10px 28px rgba(40,20,20,0.08)' : '0 1px 3px rgba(40,20,20,0.06)'}`)}>
+              <button type="button" aria-expanded={isOpen} onClick={() => setOpened(isOpen ? null : i)} style={s('width: 100%; min-height: 64px; padding: 10px 14px 10px 16px; border: none; background: transparent; color: #1D1B1A; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left')}>
+                <span style={s('flex: 1; display: flex; flex-direction: column; gap: 6px')}>
+                  <span style={s('display: flex; align-items: center; justify-content: space-between; gap: 8px')}><span style={s('font-size: 15px; font-weight: 900')}>{group.name}</span><span style={s(`flex-shrink: 0; font-size: 13px; font-weight: 900; color: ${group.done ? '#355A1F' : '#5F5A55'}`)}>{group.done ? 'Done' : group.count}</span></span>
+                  <span aria-hidden="true" style={s('height: 6px; border-radius: 3px; background: #EFEBE6; overflow: hidden; display: block')}><span style={s(`display: block; height: 6px; border-radius: 3px; background: ${group.done ? '#3E6A24' : '#1D1B1A'}; transition: width 700ms cubic-bezier(.2,.9,.25,1) ${i * 60}ms; width: ${Math.round(group.progress * 100)}%`)} /></span>
+                </span>
+                <Svg size={18} sw={2.8} stroke="#6E6863" style={s(`flex-shrink: 0; transition: transform 300ms cubic-bezier(.2,.9,.25,1.2); transform: rotate(${isOpen ? 180 : 0}deg)`)}>{ICON.down}</Svg>
+              </button>
+              {isOpen && (
+                <div className="rise" style={s('padding: 0 16px 16px; display: flex; flex-direction: column; gap: 12px')}>
+                  <div style={s('display: flex; flex-wrap: wrap; gap: 6px')}>
+                    {group.items.map((item) => <span key={item.label} style={s(CHIP + (item.state === 'd' ? 'background: #1D1B1A; color: #FFFFFF' : item.state === 'p' ? 'border: 2px dashed #1D1B1A; color: #1D1B1A' : 'border: 2px solid #C9C3BC; color: #3D3936'))}>{(item.state === 'd' ? '✓ ' : '') + item.label}</span>)}
+                  </div>
+                  {group.dig && (
+                    <button type="button" onClick={() => void digWith(group)} className="press" style={s('border: none; cursor: pointer; align-self: flex-start; height: 42px; padding: 0 16px; border-radius: 21px; background: #8C1D2B; color: #FFFFFF; text-decoration: none; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 900')}><Spade fill="#FFFFFF" outline={false} style="height: 18px; width: 7px" />Dig a schedule with these</button>
+                  )}
+                </div>
+              )}
+            </section>
+          );
+        })}
+        {A && (
+          <div style={s('display: flex; gap: 14px; padding: 6px 4px 0; font-size: 12px; font-weight: 800; color: #5F5A55')}>
+            <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 14px; height: 14px; border-radius: 7px; background: #1D1B1A')} />Done</span>
+            <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 14px; height: 14px; box-sizing: border-box; border-radius: 7px; border: 2px dashed #1D1B1A')} />Taking now</span>
+            <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 14px; height: 14px; box-sizing: border-box; border-radius: 7px; border: 2px solid #C9C3BC')} />Still needed</span>
+          </div>
+        )}
+
+        {!A && (b === 'idle' || b === 'unreadable') && (
+          <section className="rise" style={s('padding: 28px 20px; border-radius: 26px; border: 2.5px dashed #C9C3BC; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center')}>
+            <Spade fill="#8C1D2B" outline={false} style="height: 52px; width: 20px" />
+            <span style={s('font-size: 18px; font-weight: 900')}>Bring in your DARS report</span>
+            <span style={s('max-width: 260px; font-size: 14px; font-weight: 600; line-height: 1.5; color: #5F5A55')}>Download it from your student center as a PDF. We’ll compare it with your course history so you can confirm each difference.</span>
+            {b === 'unreadable' && <span role="alert" style={s('max-width: 260px; font-size: 13px; font-weight: 700; color: #8C1D2B')}>Couldn’t read {fileName}. Choose the PDF saved from DARS.</span>}
+            <input ref={picker} type="file" accept="application/pdf,.pdf" hidden onChange={(event) => {
+              void choose(event.target.files?.[0]);
+              event.target.value = '';
+            }} />
+            <button type="button" className="press" onClick={() => picker.current?.click()} style={s('margin-top: 4px; height: 50px; padding: 0 22px; border: none; border-radius: 20px; background: #1D1B1A; color: #FFFFFF; font-size: 16px; font-weight: 900; cursor: pointer')}>Choose PDF</button>
           </section>
         )}
-        {isCurrentCs && <section className="surface mt-3 space-y-2">
-          <h2 className="section-title">Programming core</h2>
-          <ul className="divide-y divide-neutral-200">
-            {['COMP SCI 300', 'COMP SCI 400'].map((code) => (
-              <li className="flex justify-between gap-2 py-2 text-sm" key={code}><strong>{code}</strong><span>{completed.some((item) => item.course_code === code) ? 'Reported complete' : 'Check in DARS'}</span></li>
-            ))}
-          </ul>
-        </section>}
-        <Link className={`${secondary} mt-4 w-full`} href="/profile#course-history">Edit course history</Link>
-      </> : <>
-        <section className="surface space-y-3">
-          <h2 className="section-title">Review your DARS report</h2>
-          <p className="text-sm text-neutral-600">Choose a PDF saved from UW DARS. It opens in this browser and stays on this device.</p>
-          <input type="file" aria-label="Choose a DARS PDF" accept="application/pdf,.pdf" className={field} onChange={async (event) => {
-            const file = event.target.files?.[0];
-            const ticket = ++fileRequest.current;
-            setDocumentUrl('');
-            setError('');
-            if (!file) return;
-            try {
-              const signature = await file.slice(0, 5).text();
-              if (ticket !== fileRequest.current) return;
-              if (signature !== '%PDF-') return setError('Choose a valid PDF.');
-              setDocumentUrl(URL.createObjectURL(new Blob([file], {type: 'application/pdf'})));
-            } catch {setError('Couldn’t read the PDF.');}
-          }} />
-          {error && <p role="alert" className="text-sm text-accent">{error}</p>}
-          {documentUrl && <>
-            <a href={documentUrl} target="_blank" rel="noreferrer" className={secondary}>Open PDF in a new tab</a>
-            <iframe title="DARS PDF preview" src={documentUrl} className="h-[65vh] w-full rounded-xl bg-neutral-100" />
-          </>}
-          <p className="text-sm"><a className="font-extrabold text-accent underline" href="https://registrar.wisc.edu/dars/">Get a report from UW DARS</a></p>
-        </section>
-        {program && <DarsChecklist programId={program.id} />}
-      </>}
-    </Screen>
+        {!A && b === 'reading' && (
+          <section className="rise" style={s('padding: 32px 20px; border-radius: 26px; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; gap: 14px')}>
+            <Spade className="digging" fill="#8C1D2B" outline={false} style="height: 52px; width: 20px" />
+            <span role="status" style={s('font-size: 16px; font-weight: 900; overflow-wrap: anywhere; text-align: center')}>Reading {fileName}…</span>
+            <span aria-hidden="true" style={s('width: 220px; height: 8px; border-radius: 4px; background: #EFEBE6; overflow: hidden; display: block')}><span style={s(`display: block; height: 8px; border-radius: 4px; background: #1D1B1A; width: ${Math.round(read * 100)}%`)} /></span>
+          </section>
+        )}
+        {!A && b === 'review' && (
+          <div className="rise" style={s('display: flex; flex-direction: column; gap: 8px')}>
+            <div style={s('padding: 12px 16px; border-radius: 20px; background: #1D1B1A; color: #FFFFFF; display: flex; align-items: center; justify-content: space-between; gap: 10px')}><span style={s('font-size: 15px; font-weight: 900; flex-shrink: 0')}>{left ? `${left} ${left === 1 ? 'difference' : 'differences'} to review` : diffs.length ? 'All reviewed' : 'No differences found'}</span><span style={s('font-size: 13px; font-weight: 800; opacity: 0.75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{fileName}</span></div>
+            {diffs.map((difference) => {
+              const gone = !!resolved[difference.course.id];
+              return (
+                <section key={difference.course.id} aria-hidden={gone} style={s(`flex-shrink: 0; overflow: hidden; transition: max-height 420ms cubic-bezier(.2,.9,.25,1), opacity 260ms ease, transform 420ms cubic-bezier(.2,.9,.25,1); ${gone ? 'max-height: 0; opacity: 0; transform: translateX(40px)' : 'max-height: 240px; opacity: 1; transform: none'}`)}>
+                  <div style={s('padding: 14px 16px; border-radius: 22px; background: #FFFFFF; display: flex; flex-direction: column; gap: 10px')}>
+                    <span style={s('font-size: 12px; font-weight: 900; color: #5F5A55')}>Course history</span>
+                    <span style={s('font-size: 15px; font-weight: 800; line-height: 1.4')}>DARS shows {difference.course.code} in {difference.taken.season} {difference.taken.year}. Your history doesn’t list it yet.</span>
+                    <div style={s('display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px')}>
+                      <button type="button" className="press" tabIndex={gone ? -1 : 0} onClick={() => setResolved((current) => ({...current, [difference.course.id]: true}))} style={s('height: 44px; border: none; border-radius: 16px; background: #F1EEEA; color: #1D1B1A; font-size: 14px; font-weight: 900; cursor: pointer')}>Keep mine</button>
+                      <button type="button" className="press" tabIndex={gone ? -1 : 0} onClick={() => void acceptDars(difference)} style={s('height: 44px; border: none; border-radius: 16px; background: #1D1B1A; color: #FFFFFF; font-size: 14px; font-weight: 900; cursor: pointer')}>Use DARS</button>
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
+            {error && <EmptyNote role="alert">{error}</EmptyNote>}
+            {left === 0 && <Link href="/profile" className="rise" style={s('margin-top: 6px; height: 56px; border-radius: 22px; background: #8C1D2B; color: #FFFFFF; text-decoration: none; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 900; box-shadow: 0 8px 20px rgba(140,29,43,0.30)')}>Update my requirements</Link>}
+          </div>
+        )}
+      </main>
+    </Frame>
   );
 }

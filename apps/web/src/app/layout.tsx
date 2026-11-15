@@ -1,21 +1,26 @@
-import type {Metadata} from 'next';
+import type {Metadata, Viewport} from 'next';
 import './globals.css';
-import {OnboardingGate} from '@/components/onboarding-gate';
-import {TabBar} from '@/components/tab-bar';
+import {SessionGate} from '@/components/session-gate';
 
 export const metadata: Metadata = {
   title: 'DIGREE',
-  description: 'Schedule-first student planning',
+  description: 'Classes, schedules and GPA for UW–Madison',
   icons: {icon: '/digree-icon.svg'},
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#F7F5F2',
 };
 
 export default function RootLayout({children}: LayoutProps<'/'>) {
   return (
     <html lang="en">
-      <body className="antialiased">
-        <OnboardingGate />
+      <body>
+        <SessionGate />
         {children}
-        <TabBar />
       </body>
     </html>
   );

@@ -146,3 +146,19 @@ export async function setMyVisibility(id: string, myVisibility: Visibility): Pro
   put(all().map((f) => (f.id === id ? {...f, myVisibility} : f)));
   return null;
 }
+
+const NO_VISIBILITY: Record<string, Visibility> = {};
+/** What each accepted friend shares with me, keyed by friend id. The database decides; this only asks. */
+export function useTheirVisibility(friends: Friend[]): Record<string, Visibility> {
+  const accepted = friends.filter((friend) => friend.status === 'accepted');
+  return useRemote(`their-visibility:${accepted.map((friend) => friend.id).sort().join(',')}`, NO_VISIBILITY, async () => {
+    if (IS_MOCK) return Object.fromEntries(accepted.map((friend) => [friend.id, friend.theirVisibility ?? 'private']));
+    if (!accepted.length) return NO_VISIBILITY;
+    const db = supabase();
+    const me = await myId();
+    return Object.fromEntries(await Promise.all(accepted.map(async (friend) => {
+      const {data, error} = await db.rpc('schedule_visibility', {owner: friend.id, viewer: me});
+      return [friend.id, error || !data ? 'private' : (data as Visibility)] as const;
+    })));
+  });
+}

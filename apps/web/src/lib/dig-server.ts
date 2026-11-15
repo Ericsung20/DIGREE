@@ -1,9 +1,7 @@
 // Server-only: reads the signed-in user's planned courses and the catalog, then builds the optimizer request.
 import {randomUUID} from 'node:crypto';
-import {parseDigInputs, toGenerateRequest, type CatalogRows, type DigDefaults, type GenerateRequest} from './dig-request';
+import {parseDigInputs, toGenerateRequest, type CatalogRows, type GenerateRequest} from './dig-request';
 import {supabaseServer} from './supabase-server';
-import type {Term} from './data/catalog';
-import {displayTerm} from './terms';
 
 type Db = Awaited<ReturnType<typeof supabaseServer>>;
 
@@ -12,41 +10,6 @@ async function plannedCourseIds(db: Db, term: string): Promise<string[]> {
   const {data, error} = await db.from('user_course_records').select('course_id').eq('term', term).eq('status', 'planned');
   if (error) throw error;
   return (data as {course_id: string}[]).map((r) => r.course_id);
-}
-
-/** Form defaults for the DIG screen, or null when nobody is signed in or no term exists. */
-export async function getDigDefaults(selectedTerm?: string): Promise<DigDefaults | 'no-terms' | null> {
-  const db = await supabaseServer();
-  const {data: auth} = await db.auth.getUser();
-  if (!auth.user) return null;
-  const {data: terms, error} = await db.from('terms').select('id, label, is_current').order('id');
-  if (error) throw error;
-  const list = terms as Term[];
-  const planned = await db.from('user_course_records').select('term').eq('status', 'planned').order('term', {ascending: false}).limit(1).maybeSingle();
-  if (planned.error) throw planned.error;
-  const term = list.find((t) => t.id === selectedTerm) ?? list.find((t) => t.id === planned.data?.term) ?? list.at(-1);
-  if (!term) return 'no-terms';
-  const ids = await plannedCourseIds(db, term.id);
-  const [{data: courses, error: courseError}, available] = await Promise.all([
-    ids.length ? db.from('courses').select('id, code, credit_options').in('id', ids).order('code') : {data: [], error: null},
-    db.from('section_bundles').select('term').eq('term', term.id).limit(1),
-  ]);
-  if (courseError) throw courseError;
-  if (available.error) throw available.error;
-  const rows = (courses ?? []) as {id: string; code: string; credit_options: number[]}[];
-  const credits = rows.reduce((sum, c) => sum + c.credit_options[0], 0);
-  return {
-    term: term.id,
-    termLabel: displayTerm(term.label),
-    terms: list.map(({id, label}) => ({id, label: displayTerm(label)})),
-    minCredits: Math.min(40, credits),
-    maxCredits: Math.min(40, rows.reduce((sum, c) => sum + Math.max(...c.credit_options), 0)),
-    earliest: 480,
-    latest: 1140,
-    courses: rows.map((c) => ({id: c.id, code: c.code, credits: c.credit_options.join('/'), required: true})),
-    sample: false,
-    hasSections: available.data.length > 0,
-  };
 }
 
 async function walkingEdges(db: Db, meetings: CatalogRows['meetings']): Promise<CatalogRows['edges']> {
@@ -73,8 +36,8 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   const {data: auth} = await db.auth.getUser();
   if (!auth.user) return {error: 'Sign in to generate schedules.'};
   const plannedIds = await plannedCourseIds(db, inputs.term);
-  if (plannedIds.length === 0) return {error: 'Add planned courses for this term first.'};
-  if (inputs.required.some((id) => !plannedIds.includes(id))) return {error: 'Your planned courses changed. Reopen DIG and try again.'};
+  if (plannedIds.length === 0) return {error: 'Add a must-take course for this term first.'};
+  if (inputs.required.some((id) => !plannedIds.includes(id))) return {error: 'Your must-take courses changed. Go back to your conditions and dig again.'};
   const catalog = await db.from('courses').select('id, code, credit_options, repeatable').in('id', plannedIds).order('code');
   if (catalog.error) throw catalog.error;
   const courses: CatalogRows['courses'] = catalog.data;
@@ -95,7 +58,7 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
     courses.push(...unique.slice(0, Math.max(0, 20 - (courses.length - inputs.required.length))));
   }
   const ids = courses.map(({id}) => id);
-  if (ids.length === 0) return {error: 'Add planned courses for this term first.'};
+  if (ids.length === 0) return {error: 'Add a must-take course for this term first.'};
 
   const perCourse = async <T,>(table: string, columns: string, sortBy: string): Promise<T[]> => {
     const pages = await Promise.all(ids.map(async (id) => {

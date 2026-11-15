@@ -2,7 +2,6 @@
 
 import {usePathname, useRouter} from 'next/navigation';
 import {useEffect} from 'react';
-import {secondary} from '@/components/screen';
 import {resetRemote} from '@/lib/data/local-store';
 import {shouldOnboard} from '@/lib/data/profile';
 import {IS_MOCK, supabase} from '@/lib/supabase';
@@ -12,23 +11,22 @@ import {IS_MOCK, supabase} from '@/lib/supabase';
  * Real mode: no session -> /login. Both modes: no academic profile -> /onboarding.
  * This only steers navigation; the data itself is protected by Row Level Security.
  */
-export function OnboardingGate() {
+export function SessionGate() {
   const pathname = usePathname();
   const router = useRouter();
   useEffect(() => {
     let stale = false;
     (async () => {
       const onLogin = pathname === '/login';
-      if (IS_MOCK) {
-        if (onLogin) return router.replace('/');
-      } else {
+      if (!IS_MOCK) {
         const {data} = await supabase().auth.getSession();
         if (stale) return;
         if (!data.session) return onLogin ? undefined : router.replace('/login');
         if (onLogin) return router.replace('/');
       }
-      if (!pathname.startsWith('/onboarding') && await shouldOnboard() && !stale) router.replace('/onboarding');
-    })().catch((error) => console.error('Checking the academic profile failed', error));
+      // Mock mode has no session, so the log-in screen stays reachable as a plain screen.
+      if (!onLogin && !pathname.startsWith('/onboarding') && await shouldOnboard() && !stale) router.replace('/onboarding');
+    })().catch((error) => console.error('Checking the session failed', error));
     return () => {
       stale = true;
     };
@@ -36,21 +34,9 @@ export function OnboardingGate() {
   return null;
 }
 
-/** Shown on Profile in real mode only; mock mode has no account to leave. */
-export function SignOutButton() {
-  const router = useRouter();
-  if (IS_MOCK) return null;
-  return (
-    <button
-      type="button"
-      className={`${secondary} mt-8 w-full`}
-      onClick={async () => {
-        await supabase().auth.signOut();
-        resetRemote();
-        router.replace('/login');
-      }}
-    >
-      Sign out
-    </button>
-  );
+/** Ends the session and clears everything cached for the account. Mock mode has no session to end. */
+export async function signOut(): Promise<void> {
+  if (IS_MOCK) return;
+  await supabase().auth.signOut();
+  resetRemote();
 }

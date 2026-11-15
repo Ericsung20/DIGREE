@@ -79,9 +79,9 @@ export async function setCountsTowardMajor(id: string, value: boolean): Promise<
   put(current().map((r) => (r.id === id ? {...r, counts_toward_major: value} : r)));
 }
 
-export async function changeCourseSection(id: string, bundleId: string): Promise<string | null> {
+export async function changeCourseSection(id: string, bundleId: string | null): Promise<string | null> {
   if (!IS_MOCK) {
-    const {error} = await supabase().from('user_course_records').update({bundle_id: bundleId}).eq('id', id).eq('status', 'enrolled_self_reported');
+    const {error} = await supabase().from('user_course_records').update({bundle_id: bundleId}).eq('id', id).in('status', ['enrolled_self_reported', 'completed']);
     if (error) return error.message;
   }
   put(current().map((record) => record.id === id ? {...record, bundle_id: bundleId} : record));
@@ -90,36 +90,44 @@ export async function changeCourseSection(id: string, bundleId: string): Promise
 
 // Grades live apart from the records, like grade_entries (keyed by record_id) in the DB handoff.
 // Grades are entered by the user and readable only by them (owner-only RLS). They are never sent anywhere else.
-type Grades = Record<string, LetterGrade>;
+/** `final` is false while the grade is a projection for a course still in progress. */
+export type GradeEntry = {grade: LetterGrade; final: boolean};
+type Grades = Record<string, GradeEntry>;
 const GRADES_KEY = 'digree.grades';
 const NO_GRADES: Grades = {};
 
 async function fetchGrades(): Promise<Grades> {
-  const {data, error} = await supabase().from('grade_entries').select('record_id, letter_grade');
+  const {data, error} = await supabase().from('grade_entries').select('record_id, letter_grade, is_final');
   if (error) throw error;
-  const rows = data as {record_id: string; letter_grade: LetterGrade | null}[];
-  return Object.fromEntries(rows.flatMap((g) => (g.letter_grade ? [[g.record_id, g.letter_grade]] : [])));
+  const rows = data as {record_id: string; letter_grade: LetterGrade | null; is_final: boolean}[];
+  return Object.fromEntries(rows.flatMap((g) => (g.letter_grade ? [[g.record_id, {grade: g.letter_grade, final: g.is_final}]] : [])));
 }
 
-const currentGrades = () => (IS_MOCK ? readStore(GRADES_KEY, NO_GRADES) : getRemote(GRADES_KEY, NO_GRADES));
-function putGrade(recordId: string, grade: LetterGrade | null): void {
+// Browsers that used an earlier build stored the bare letter; those grades were entered as final.
+const readGrades = (stored: Record<string, GradeEntry | LetterGrade>): Grades =>
+  Object.values(stored).some((value) => typeof value === 'string')
+    ? Object.fromEntries(Object.entries(stored).map(([id, value]) => [id, typeof value === 'string' ? {grade: value, final: true} : value]))
+    : (stored as Grades);
+const currentGrades = () => (IS_MOCK ? readGrades(readStore(GRADES_KEY, NO_GRADES)) : getRemote(GRADES_KEY, NO_GRADES));
+function putGrade(recordId: string, entry: GradeEntry | null): void {
   const next = {...currentGrades()};
-  if (grade) next[recordId] = grade;
+  if (entry) next[recordId] = entry;
   else delete next[recordId];
   if (IS_MOCK) writeStore(GRADES_KEY, next);
   else setRemote(GRADES_KEY, next);
 }
 
-export const useGrades: () => Grades = IS_MOCK ? () => useStore(GRADES_KEY, NO_GRADES) : () => useRemote(GRADES_KEY, NO_GRADES, fetchGrades);
+export const useGrades: () => Grades = IS_MOCK ? () => readGrades(useStore(GRADES_KEY, NO_GRADES)) : () => useRemote(GRADES_KEY, NO_GRADES, fetchGrades);
 
-/** `isFinal` is true for completed courses; a current-term grade is a projection. */
-export async function setGrade(recordId: string, grade: LetterGrade | null, isFinal: boolean): Promise<void> {
+/** `isFinal` is false for a projection: it shows in its own term and stays out of the cumulative GPA. */
+export async function setGrade(recordId: string, grade: LetterGrade | null, isFinal: boolean): Promise<string | null> {
   if (!IS_MOCK) {
     const table = supabase().from('grade_entries');
     const {error} = grade ? await table.upsert({record_id: recordId, letter_grade: grade, is_final: isFinal}) : await table.delete().eq('record_id', recordId);
-    if (error) return console.error('Saving the grade failed', error);
+    if (error) return error.message;
   }
-  putGrade(recordId, grade);
+  putGrade(recordId, grade ? {grade, final: isFinal} : null);
+  return null;
 }
 
 export async function removeCourseRecord(id: string): Promise<void> {

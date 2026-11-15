@@ -16,10 +16,10 @@ export type Bundle = {bundle_id: string; label: string; summary: string; meeting
 export type Course = {id: string; code: string; credit_options: number[]; bundles: Bundle[]};
 
 export const TERMS: Term[] = [
-  {id: '2026SP', label: 'Spring 2026 (demo)', is_current: false},
-  {id: '2026FA', label: 'Fall 2026 (demo)', is_current: false},
-  {id: '2027SP', label: 'Spring 2027 (demo)', is_current: true},
-  {id: '2027FA', label: 'Fall 2027 (demo)', is_current: false},
+  {id: '2026SP', label: 'Spring 2026', is_current: false},
+  {id: '2026FA', label: 'Fall 2026', is_current: false},
+  {id: '2027SP', label: 'Spring 2027', is_current: true},
+  {id: '2027FA', label: 'Fall 2027', is_current: false},
 ];
 export const CURRENT_TERM = TERMS.find((t) => t.is_current)!.id;
 export const termLabel = (id: string) => TERMS.find((t) => t.id === id)?.label ?? id;
@@ -49,17 +49,48 @@ export const currentTermOf = (terms: Term[]) => terms.find((t) => t.is_current)?
 
 export type CourseHit = {id: string; code: string; title: string | null; credit_options: number[]};
 
+// Synthetic titles for the mock catalog, so screens that show a course name have one.
+const MOCK_TITLES: Record<string, string> = {
+  cs400: 'Programming III',
+  math234: 'Calculus: Functions of Several Variables',
+  stat240: 'Data Science Modeling I',
+  demo101: 'Demo Seminar',
+  demo102: 'Demo Lab',
+  demo201: 'Demo Studio',
+};
+const mockHit = (course: Course): CourseHit => ({id: course.id, code: course.code, title: MOCK_TITLES[course.id] ?? null, credit_options: course.credit_options});
+
 export function useCourseInfo(id: string | null) {
   return useRemote<CourseHit | null>(`course:${id}`, null, async () => {
     if (!id) return null;
     if (IS_MOCK) {
       const course = COURSES.find((item) => item.id === id);
-      return course ? {...course, title: null} : null;
+      return course ? mockHit(course) : null;
     }
     const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').eq('id', id).maybeSingle();
     if (error) throw error;
     return data;
   });
+}
+
+const NO_COURSES: Record<string, CourseHit> = {};
+/** Code, title and credits for a set of course ids. Unknown ids are simply absent. */
+export function useCourseDetails(ids: string[]): Record<string, CourseHit> {
+  const unique = [...new Set(ids)].sort();
+  return useRemote(`courses:${unique.join(',')}`, NO_COURSES, async () => {
+    if (!unique.length) return NO_COURSES;
+    if (IS_MOCK) return Object.fromEntries(COURSES.filter((course) => unique.includes(course.id)).map((course) => [course.id, mockHit(course)]));
+    const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').in('id', unique);
+    if (error) throw error;
+    return Object.fromEntries((data as CourseHit[]).map((course) => [course.id, course]));
+  });
+}
+
+/** The term just before the current one: where a course marked "taken" is filed. */
+export function previousTermOf(terms: Term[]): string | null {
+  const current = terms.findIndex((term) => term.is_current);
+  if (current > 0) return terms[current - 1].id;
+  return current === 0 ? null : terms.at(-1)?.id ?? null;
 }
 
 const NO_NAMES: Record<string, string> = {};
@@ -75,12 +106,26 @@ export function useBuildingNames(ids: string[]) {
 
 /** Course search by code. Real mode needs 2+ characters and returns at most 20 rows. */
 export async function searchCourses(q: string): Promise<CourseHit[]> {
-  const needle = q.trim().replace(/[%_,()]/g, ''); // keep LIKE wildcards and filter syntax out
-  if (IS_MOCK) return COURSES.filter((c) => c.code.toLowerCase().includes(needle.toLowerCase())).map((c) => ({id: c.id, code: c.code, title: null, credit_options: c.credit_options}));
+  // Keep LIKE wildcards and filter syntax out. "CS 577" is how the app abbreviates COMP SCI, so accept it back.
+  const needle = q.trim().replace(/[%_,()]/g, '').replace(/^cs\s*(?=\d|$)/i, 'COMP SCI ').trim();
+  if (IS_MOCK) return needle ? COURSES.filter((c) => c.code.toLowerCase().includes(needle.toLowerCase())).map(mockHit) : [];
   if (needle.length < 2) return [];
   const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').ilike('code', `%${needle}%`).order('code').limit(20);
   if (error) throw error;
   return data as CourseHit[];
+}
+
+/** Catalog courses with exactly these codes. Codes the catalog does not know are simply absent. */
+export async function findCoursesByCodes(codes: string[]): Promise<CourseHit[]> {
+  const unique = [...new Set(codes)];
+  if (IS_MOCK) return COURSES.filter((course) => unique.includes(course.code)).map(mockHit);
+  const found: CourseHit[] = [];
+  for (let start = 0; start < unique.length; start += 100) {
+    const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').in('code', unique.slice(start, start + 100));
+    if (error) throw error;
+    found.push(...(data as CourseHit[]));
+  }
+  return found;
 }
 
 /** Section bundles of one course in one term, with their meetings. Empty when the catalog has none. */
@@ -135,6 +180,16 @@ export function useBundlesFor(refs: BundleRef[]): Record<string, Bundle> {
       }),
     );
     return out;
+  });
+}
+
+const NO_LISTS: Record<string, Bundle[]> = {};
+/** Every section of each listed course in one term, keyed by course id. */
+export function useBundleLists(term: string | null, courseIds: string[]): Record<string, Bundle[]> {
+  const unique = [...new Set(courseIds)].sort();
+  return useRemote(`bundle-lists:${term}|${unique.join(',')}`, NO_LISTS, async () => {
+    if (!term || !unique.length) return NO_LISTS;
+    return Object.fromEntries(await Promise.all(unique.map(async (id) => [id, await getBundles(id, term)] as const)));
   });
 }
 
