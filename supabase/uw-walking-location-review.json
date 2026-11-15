@@ -1,0 +1,22 @@
+{
+  "1274": {
+    "uw-0000A": {
+      "needs_review": "UW class listing says OFF CAMPUS without a specific location"
+    },
+    "uw-0011": {
+      "lat": 43.0599015,
+      "lon": -89.4814717,
+      "source": "https://www.openstreetmap.org/node/3313551457",
+      "verification": "https://pollinators.wisc.edu/honey-bees/honey-bee-medicine/"
+    },
+    "uw-0025": {
+      "needs_review": "UW reports that the Camp Randall Memorial Sports Center was demolished",
+      "source": "https://news.wisc.edu/a-new-home-for-the-uw-athletic-hall-of-fame/"
+    },
+    "uw-0211": {
+      "lat": 43.072867198413974,
+      "lon": -89.40791555038255,
+      "source": "https://www.arcgis.com/home/item.html?id=b8e0353931194e1f8fd03dfcddc55f69"
+    }
+  }
+}

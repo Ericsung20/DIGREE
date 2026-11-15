@@ -1,0 +1,6 @@
+# The image needs only pyproject.toml and the app package.
+*
+!pyproject.toml
+!app
+**/__pycache__
+**/*.pyc
