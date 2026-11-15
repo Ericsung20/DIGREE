@@ -19,6 +19,8 @@ type ProfileProgram = {
 };
 
 const KEY = 'digree.profile.programs';
+export const MAX_ADDITIONAL_MAJORS = 2;
+export const MAJOR_LIMIT_MESSAGE = 'You can save up to 3 majors, including your primary major.';
 const EMPTY: ProfileProgram[] = [];
 const COLUMNS = 'id, kind, program_id, name, catalog_year, supplemental_program_key';
 const CATALOG_KEY = 'digree.supplemental.catalog';
@@ -58,6 +60,9 @@ export const useProfilePrograms = IS_MOCK ? () => useStore(KEY, EMPTY) : () => u
 export async function addProfileProgram(draft: ProfileProgramDraft) {
   if (IS_MOCK) {
     const entries = readStore(KEY, EMPTY);
+    if (draft.kind === 'major' && entries.filter((entry) => entry.kind === 'major').length >= MAX_ADDITIONAL_MAJORS) {
+      throw new Error(MAJOR_LIMIT_MESSAGE);
+    }
     if (entries.some((entry) => draft.kind === 'major'
       ? entry.program_id === draft.program_id
       : entry.supplemental_program_key === draft.supplemental_program_key)) {
@@ -71,6 +76,9 @@ export async function addProfileProgram(draft: ProfileProgramDraft) {
   if (!auth.user) throw new Error('Sign in to save a program.');
   const {data, error} = await db.from('academic_profile_programs')
     .insert({...draft, user_id: auth.user.id}).select(COLUMNS).single();
+  if (error?.message === MAJOR_LIMIT_MESSAGE || (error?.code === '23505' && error.message.includes('academic_profile_major_slot_unique'))) {
+    throw new Error(MAJOR_LIMIT_MESSAGE);
+  }
   if (error?.code === '23505') throw new Error('This program is already in your profile.');
   if (error && ['PGRST205', 'PGRST204', '42703'].includes(error.code)) throw new Error('Saving additional programs is temporarily unavailable.');
   if (error) throw error;

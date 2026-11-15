@@ -2,7 +2,8 @@
 
 import {useState, type FormEvent} from 'react';
 import {
-  addProfileProgram, removeProfileProgram, useProfilePrograms, useSupplementalCatalog, type ProfileProgramDraft,
+  addProfileProgram, MAJOR_LIMIT_MESSAGE, MAX_ADDITIONAL_MAJORS, removeProfileProgram,
+  useProfilePrograms, useSupplementalCatalog, type ProfileProgramDraft,
 } from '@/lib/data/profile-programs';
 import {latestCatalogEdition, useAcademicOptions} from '@/lib/data/profile';
 import styles from './profile-programs.module.css';
@@ -20,6 +21,7 @@ export function ProfilePrograms({primaryId}: {primaryId: string}) {
   const [supplementalName, setSupplementalName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const atMajorLimit = entries.filter((entry) => entry.kind === 'major').length >= MAX_ADDITIONAL_MAJORS;
 
   const saved = programs.filter((program) => program.id === primaryId || entries.some((entry) => entry.program_id === program.id));
   const available = programs.filter((program) => !saved.some((item) => item.college_id === program.college_id && item.label === program.label));
@@ -43,6 +45,10 @@ export function ProfilePrograms({primaryId}: {primaryId: string}) {
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!kind || busy) return;
+    if (kind === 'major' && atMajorLimit) {
+      setError(MAJOR_LIMIT_MESSAGE);
+      return;
+    }
     let draft: ProfileProgramDraft;
     if (kind === 'major' && chosenMajor) {
       draft = {kind, program_id: chosenMajor.id, name: null, catalog_year: null};
@@ -101,9 +107,10 @@ export function ProfilePrograms({primaryId}: {primaryId: string}) {
       </ul>}
       <div className={styles.actions}>
         {(Object.keys(KINDS) as Kind[]).map((item) => (
-          <button key={item} type="button" disabled={busy} aria-expanded={kind === item} onClick={() => open(item)}>+ {KINDS[item]}</button>
+          <button key={item} type="button" disabled={busy || (item === 'major' && atMajorLimit)} aria-expanded={kind === item} onClick={() => open(item)}>+ {KINDS[item]}</button>
         ))}
       </div>
+      {atMajorLimit && <p className={styles.error}>{MAJOR_LIMIT_MESSAGE}</p>}
       {kind && (
         <form key={kind} className={styles.editor} onSubmit={add}>
           <h3>Add {kind === 'major' ? 'another major' : `a ${kind}`}</h3>
