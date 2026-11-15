@@ -66,30 +66,41 @@ async function walkingEdges(db: Db, meetings: CatalogRows['meetings']): Promise<
   }
 }
 
+async function canTakeCS400(db: Db, term: string): Promise<boolean> {
+  const {data: history, error} = await db.from('user_course_records')
+    .select('term, status, grade_entries(letter_grade), terms(is_current)')
+    .eq('course_id', CS400_PREREQUISITE.prerequisiteId)
+    .lt('term', term).in('status', ['completed', 'enrolled_self_reported'])
+    .overrideTypes<PriorAttempt[], {merge: false}>();
+  if (error) throw error;
+  return hasPriorPrerequisite(history, term);
+}
+
 /** Candidates are the user's planned courses for the term; the form decides which are required. */
 export async function buildGenerateRequestFromDb(raw: unknown): Promise<GenerateRequest | {error: string}> {
   const inputs = parseDigInputs(raw);
   if ('error' in inputs) return inputs;
+  const {term} = inputs;
   const db = await supabaseServer();
   const {data: auth} = await db.auth.getUser();
   if (!auth.user) return {error: 'Sign in to generate schedules.'};
   const plannedIds = await plannedCourseIds(db, inputs.term);
   if (plannedIds.length === 0) return {error: 'Add planned courses for this term first.'};
   if (inputs.required.some((id) => !plannedIds.includes(id))) return {error: 'Your planned courses changed. Reopen DIG and try again.'};
-  if (CS400_PREREQUISITE.terms.has(inputs.term) && inputs.required.includes(CS400_PREREQUISITE.courseId)) {
-    const {data: history, error} = await db.from('user_course_records')
-      .select('term, status, grade_entries(letter_grade), terms(is_current)')
-      .eq('course_id', CS400_PREREQUISITE.prerequisiteId)
-      .lt('term', inputs.term).in('status', ['completed', 'enrolled_self_reported'])
-      .overrideTypes<PriorAttempt[], {merge: false}>();
-    if (error) throw error;
-    if (!hasPriorPrerequisite(history, inputs.term)) {
-      return {error: CS400_PREREQUISITE.message};
-    }
+  let cs400Eligibility: Promise<boolean> | undefined;
+  async function filterPrerequisites(candidates: CatalogRows['courses']): Promise<CatalogRows['courses']> {
+    const courseId = CS400_PREREQUISITE.courseId;
+    if (!CS400_PREREQUISITE.terms.has(term) || !candidates.some(course => course.id === courseId)) return candidates;
+    cs400Eligibility ??= canTakeCS400(db, term);
+    return await cs400Eligibility ? candidates : candidates.filter(course => course.id !== courseId);
   }
+
   const catalog = await db.from('courses').select('id, code, credit_options, repeatable').in('id', plannedIds).order('code');
   if (catalog.error) throw catalog.error;
-  const courses: CatalogRows['courses'] = catalog.data;
+  const courses = await filterPrerequisites(catalog.data);
+  if (cs400Eligibility && (inputs.required.includes(CS400_PREREQUISITE.courseId) || courses.length === 0) && !(await cs400Eligibility)) {
+    return {error: CS400_PREREQUISITE.message};
+  }
   const availableCredits = courses.reduce((total, course) => total + Math.max(...course.credit_options), 0);
   if (inputs.related && availableCredits < inputs.minCredits) {
     const subjects = [...new Set(courses.flatMap(({code}) => {
@@ -104,7 +115,8 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
       return data.map(({id, code, credit_options, repeatable}) => ({id, code, credit_options, repeatable}));
     }));
     const unique = [...new Map(extras.flat().filter((course) => !plannedIds.includes(course.id)).map((course) => [course.id, course])).values()];
-    courses.push(...unique.slice(0, Math.max(0, 20 - (courses.length - inputs.required.length))));
+    const eligible = await filterPrerequisites(unique);
+    courses.push(...eligible.slice(0, Math.max(0, 20 - (courses.length - inputs.required.length))));
   }
   const ids = courses.map(({id}) => id);
   if (ids.length === 0) return {error: 'Add planned courses for this term first.'};
