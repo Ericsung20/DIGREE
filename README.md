@@ -8,6 +8,8 @@ DIGREE helps UW–Madison students plan class schedules. The web app reads cours
 | FastAPI optimizer | [Optimizer README](apps/optimizer/README.md) |
 | Supabase schema, seed data, and imports | [Database README](supabase/README.md) |
 
+현재 DB 구성과 데이터 연결은 [DB 구성 정리](docs/database-overview.ko.md)를 참고하세요.
+
 ## Shared development (the team default)
 
 Both developers run the web app and optimizer on their own machines and connect to the same existing DIGREE Supabase project. Docker is not needed for this workflow. Follow [the team setup guide](docs/shared-development.md). Project references and their intended use are recorded in [environments.json](supabase/environments.json); a separate production project will be created before public launch.

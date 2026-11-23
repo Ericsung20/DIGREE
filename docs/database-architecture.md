@@ -1,5 +1,7 @@
 # DIGREE database revision
 
+For the current structure and verified dataset snapshot in Korean, see [DB 구성 정리](database-overview.ko.md). The rollout sections below also retain historical counts and validation results.
+
 The existing hosted project is **shared development** by team choice. No new cloud project, paid branch, or paid upgrade was created. The free account already has two active projects. A separate production project is deferred until public launch. Public environment identity lives in `supabase/environments.json`; credentials remain outside Git.
 
 ## Data boundaries
