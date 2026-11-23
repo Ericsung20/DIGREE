@@ -1,0 +1,12 @@
+{
+  "sharedDevelopment": {
+    "projectRef": "wsfvhcsfjtblnkzghxnd",
+    "url": "https://wsfvhcsfjtblnkzghxnd.supabase.co",
+    "purpose": "Shared development; preserve existing student data and use dedicated test accounts."
+  },
+  "production": null,
+  "localRegression": {
+    "projectId": "DIGREE-dev",
+    "apiUrl": "http://127.0.0.1:55321"
+  }
+}

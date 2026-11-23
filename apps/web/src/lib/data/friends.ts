@@ -5,7 +5,7 @@ import type {Meeting} from './catalog';
 import {getRemote, readStore, setRemote, useRemote, useStore, writeStore} from './local-store';
 import {readScheduleItems, SAVED_ITEMS} from './saved-schedules';
 
-// A pending request grants no schedule access. The database checks sharing permissions after acceptance.
+// Acceptance grants access to schedules in both directions.
 
 export type Friend = {
   /** Mock: a local NetID. Real: the other account's UUID. */
@@ -95,16 +95,19 @@ export async function loadFriendSchedule(friend: Friend, term: string | null): P
   if (friend.status !== 'accepted' || !term) return {access: 'none'};
   const db = supabase();
   const me = await myId();
+  if (!me) return {access: 'none'};
   const {data: visibility, error} = await db.rpc('schedule_visibility', {owner: friend.id, viewer: me});
-  if (error || visibility !== 'full') return {access: 'none'};
+  if (error) throw error;
+  if (visibility !== 'full') return {access: 'none'};
   const {data: enrolled, error: enrolledError} = await db.rpc('friend_enrolled_schedule', {p_owner: friend.id, p_term: term});
-  if (enrolledError) return {access: 'none'};
-  if (enrolled?.length) return {access: 'full', items: (enrolled as {course_code: string; meetings: Slot[]}[]).map((row) => ({label: row.course_code, meetings: row.meetings}))};
-  // RLS enforces the owner's full sharing permission on saved schedules and items.
+  if (enrolledError) throw enrolledError;
+  const scheduled = ((enrolled ?? []) as {course_code: string; meetings: Slot[]}[]).filter((row) => row.meetings.length > 0);
+  if (scheduled.length) return {access: 'full', items: scheduled.map((row) => ({label: row.course_code, meetings: row.meetings}))};
+  // RLS allows accepted friends to read saved schedules and items.
   const {data: schedule, error: scheduleError} = await db.from('saved_schedules')
     .select(`saved_schedule_items!inner(${SAVED_ITEMS})`).eq('user_id', friend.id).eq('term', term).eq('mode', 'planned')
-    .order('name', {ascending: false}).order('id').limit(1).maybeSingle();
-  if (scheduleError) return {access: 'none'};
+    .eq('state', 'active').maybeSingle();
+  if (scheduleError) throw scheduleError;
   const rows = readScheduleItems(schedule?.saved_schedule_items ?? []);
   return {access: 'full', items: rows.map((r) => ({label: r.course_code, meetings: r.meetings}))};
 }

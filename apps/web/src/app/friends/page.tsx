@@ -134,6 +134,7 @@ export default function FriendsPage() {
               ? <span style={s('font-size: 12px; font-weight: 800; color: #6E6863')}>Already in your list</span>
               : <button type="button" className="press" disabled={sending} onClick={() => void send()} aria-label={`Send friend request to ${match.netid}`} style={s('height: 36px; padding: 0 14px; border: none; border-radius: 18px; background: #8C1D2B; color: #FFFFFF; font-size: 13px; font-weight: 900; cursor: pointer')}>{sending ? 'Sending…' : '+ Add'}</button>}
           </div>}
+          {match && <p style={s('margin: 0 4px; font-size: 13px; color: #5F5A55')}>If they accept, you can see each other’s schedules.</p>}
           {note && <span role={note.error ? 'alert' : 'status'} style={s(`padding: 0 4px; font-size: 13px; font-weight: 700; color: ${note.error ? '#8C1D2B' : '#5F5A55'}`)}>{note.text}</span>}
         </form>
 
@@ -144,6 +145,7 @@ export default function FriendsPage() {
                 <Avatar id={friend.id} name={friend.name} size={46} />
                 <span style={s('flex: 1; display: flex; flex-direction: column')}><span style={s('font-size: 16px; font-weight: 900')}>{friend.name}</span><span style={s('font-size: 13px; font-weight: 700; color: #5F5A55')}>Wants to be friends</span></span>
               </div>
+              <p style={s('margin: 0; font-size: 13px; color: #5F5A55')}>Accepting lets you see each other’s schedules.</p>
               <div style={s('display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px')}>
                 <button type="button" className="press" onClick={() => answer(friend.id, false)} style={s('height: 46px; border: none; border-radius: 16px; background: #F1EEEA; color: #1D1B1A; font-size: 15px; font-weight: 900; cursor: pointer')}>Not now</button>
                 <button type="button" className="press" onClick={() => answer(friend.id, true)} style={s('height: 46px; border: none; border-radius: 16px; background: #8C1D2B; color: #FFFFFF; font-size: 15px; font-weight: 900; cursor: pointer')}>Accept</button>

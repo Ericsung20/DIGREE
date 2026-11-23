@@ -78,8 +78,16 @@ async function collectCatalog() {
 }
 
 async function catalog() {
-  const {manifest, summary} = await collectCatalog();
+  const {manifest, summary, rows} = await collectCatalog();
   await writeAtomic(manifestPath, JSON.stringify(manifest));
+  // Preserve all public search rows, including variants the planner cannot use.
+  for (let start = 0; start < rows.length; start += 800) {
+    const number = String(start / 800 + 1).padStart(3, '0');
+    await writeAtomic(join(directory, 'raw-catalog-' + number + '.sql'), asSql({
+      term: manifest.term, courses: [], packages: [], stats: [], buildings: [],
+      raw_source_rows: rows.slice(start, start + 800), source_summary: summary,
+    }));
+  }
   const batchSize = 800;
   for (let offset = 0; offset < manifest.entries.length; offset += batchSize) {
     const courses = manifest.entries.slice(offset, offset + batchSize).map(entry => entry.course);

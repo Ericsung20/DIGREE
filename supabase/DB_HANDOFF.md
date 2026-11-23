@@ -2,6 +2,12 @@
 
 The public schema and [generated database types](./types/database.ts) are the app's Supabase interface. Use the signed-in user's session token for student requests. The service role can bypass RLS. Keep its key on the server and restrict it to administrative tasks.
 
+The current integration revision is described in [database architecture](../docs/database-architecture.md). The existing DIGREE hosted project is shared development by explicit team choice; separate production is deferred until public launch. New stable interfaces are `catalog_courses`, `search_catalog_courses`, `course_offerings`, `catalog_instructors`, `student_programs`, `program_versions`, `requirement_groups`, `planner_courses`, `course_attempts`, `transfer_credits` and `save_schedule`.
+
+Transfer records are owner-only recognized-credit observations. Mapped equivalents inform prerequisite checks and degree-credit estimates; unmapped credit contributes only to the credit estimate. They do not create UW grades, residency evidence or chat eligibility. A single non-repeatable UW equivalent is credited once across completed courses and transfers. One transfer award record is supported per equivalent; edit its recognized total when multiple source courses jointly map to that equivalent.
+
+Save a plan through `save_schedule(p_term,p_items,p_request_id,p_name)` rather than separate header/item writes. The function derives the owner from the session, validates credit choices and atomically archives the previous active plan. Read `saved_schedules.state='active'` rather than parsing names. Existing storage tables remain during the compatibility window; obsolete `schedule_permissions` values do not control access.
+
 ## Configuration
 
 | App variable | Value |
@@ -15,7 +21,7 @@ The public schema and [generated database types](./types/database.ts) are the ap
 See [README.md](./README.md) for local start, reset, tests and demo accounts. To regenerate the public types from a running local database in PowerShell:
 
 ```powershell
-$types = npx --yes supabase@3.1.0 gen types typescript --schema public
+$types = npx --yes supabase@3.1.0 gen types typescript --local --workdir supabase/.temp/dev-stack --schema public
 if ($LASTEXITCODE -ne 0) { throw 'Type generation failed' }
 [IO.File]::WriteAllLines((Join-Path (Get-Location) 'supabase/types/database.ts'), [string[]]$types)
 npx --yes prettier@3.6.2 --write supabase/types/database.ts
@@ -64,7 +70,7 @@ DIG's major-course cap classifies candidates using the student's explicit `count
 - `find_friend_by_netid(p_netid)` searches a confirmed `@wisc.edu` account by exact NetID without creating a request. `send_friend_request(p_netid)` then creates the pending request when the user selects Add on the result. `friend_netids()` labels only the caller’s existing requests and friends. The recipient must accept before either side gains schedule access.
 - `friend_enrolled_schedule(p_owner, p_term)` returns course codes and meetings for a friend's self-reported enrollment when full sharing is enabled. Grades and other course-record fields remain private.
 - DIG pages through the selected term's `course_designations` to include matching breadth, Comm A/B, QR A/B, and Ethnic Studies courses without an alphabetical shortlist.
-- `schedule_visibility(owner, viewer)` uses the owner's sharing permission for an accepted friend. `can_view_schedule(owner, viewer)` checks full access. Removing a friendship ends access immediately.
+- `schedule_visibility(owner, viewer)` grants accepted friends full schedule access unless either user has blocked the other. `can_view_schedule(owner, viewer)` checks full access. Removing a friendship ends access immediately. Private grades, transfers and academic profiles are never included.
 - `community_vote_totals(p_ids)` and `set_community_vote(p_post, p_value)` return a score floored at zero while retaining each user's up or down vote.
 - `my_chat_rooms()` returns `room_id`, `term`, `course_id`, `course_code`, `title`, `participant_count` and `my_alias` in course-code order. The count includes joined members with a current qualifying record. `my_alias` is null until the user joins, even if the generated RPC type infers it as a string. The room title falls back to the course code.
 - `is_room_member(room_id)` checks current-term `enrolled_self_reported` eligibility. `join_chat_room(room_id)` checks eligibility and returns the user's stable alias for that room. To send, insert `room_id`, `alias` and `body` into `chat_messages`. Subscribe to new rows with a `room_id` filter and a user session. Withdrawal or a change of term removes room, message and send access through RLS.

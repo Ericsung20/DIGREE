@@ -178,6 +178,15 @@ set local standard_conforming_strings = on;
 create temp table catalog_import (payload jsonb) on commit drop;
 insert into catalog_import values ('${json}'::jsonb);
 
+create temp table catalog_run on commit drop as
+with run as (
+    insert into ingestion.import_runs(source,term,parser_version)
+    select 'uw_public_course_search',payload->'term'->>'id','catalog-v2' from catalog_import
+    returning id
+) select id from run;
+insert into ingestion.source_snapshots(run_id,source_key,payload,checksum,fetched_at)
+select run.id,'catalog-batch',data.payload,md5(data.payload::text),now() from catalog_import data cross join catalog_run run;
+
 insert into public.terms (id, label)
 select payload->'term'->>'id',
     regexp_replace(regexp_replace(payload->'term'->>'label', '^(Fall) ([0-9]{4})-[0-9]{4}$', '\\1 \\2'), '^(Spring|Summer) [0-9]{4}-([0-9]{4})$', '\\1 \\2')
@@ -190,6 +199,13 @@ from catalog_import cross join lateral jsonb_populate_recordset(null::public.cou
 on conflict (id) do update set code = excluded.code, title = excluded.title,
     credit_options = excluded.credit_options, breadth = excluded.breadth,
     repeatable = excluded.repeatable, source = excluded.source, fetched_at = excluded.fetched_at;
+
+insert into public.course_offerings(term,course_id,title,credit_options,breadth,repeatable,source,fetched_at,snapshot_kind)
+select payload->'term'->>'id',row.id,row.title,row.credit_options,row.breadth,row.repeatable,row.source,row.fetched_at,'imported'
+from catalog_import cross join lateral jsonb_populate_recordset(null::public.courses,payload->'courses') row
+on conflict(term,course_id) do update set title=excluded.title,credit_options=excluded.credit_options,
+    breadth=excluded.breadth,repeatable=excluded.repeatable,source=excluded.source,fetched_at=excluded.fetched_at,snapshot_kind='imported'
+where course_offerings.fetched_at is null or course_offerings.fetched_at<=excluded.fetched_at;
 
 insert into public.buildings (id, name)
 select row.id, row.name from catalog_import
@@ -205,6 +221,13 @@ select term, course_id, bundle_id, seat_status, section_label, coalesce(instruct
 on conflict (term, course_id, bundle_id) do update set seat_status = excluded.seat_status,
     section_label = coalesce(excluded.section_label, section_bundles.section_label),
     instructors = case when cardinality(excluded.instructors) > 0 then excluded.instructors else section_bundles.instructors end;
+
+insert into public.course_instructors(term,course_id,bundle_id,instructors,source_url,fetched_at)
+select p.term,p.course_id,p.bundle_id,p.instructors,'https://public.enroll.wisc.edu/search',
+    coalesce((select max(row.fetched_at) from catalog_import cross join lateral jsonb_populate_recordset(null::public.courses,payload->'courses') row),now())
+from catalog_packages p where cardinality(p.instructors)>0
+on conflict(term,course_id,bundle_id) do update set instructors=excluded.instructors,source_url=excluded.source_url,fetched_at=excluded.fetched_at
+where course_instructors.fetched_at<=excluded.fetched_at;
 
 delete from public.meetings as meeting using catalog_packages as package
 where (meeting.term, meeting.course_id, meeting.bundle_id) = (package.term, package.course_id, package.bundle_id);
@@ -223,6 +246,9 @@ on conflict (course_id) do update set a_ab_count = excluded.a_ab_count, sample_s
 
 insert into public.chat_rooms (term, course_id)
 select distinct term, course_id from catalog_packages on conflict do nothing;
+update ingestion.import_runs set status='completed',finished_at=now(),summary=jsonb_build_object(
+    'courses',(select count(*) from catalog_import cross join lateral jsonb_array_elements(payload->'courses')),
+    'packages',(select count(*) from catalog_packages)) where id in(select id from catalog_run);
 commit;`;
 }
 export { asSql, getJson, normalizePackage, gradeStats, enroll };

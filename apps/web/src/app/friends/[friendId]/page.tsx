@@ -23,7 +23,7 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 
 const H = 48;
 type Slot = Pick<Meeting, 'day' | 'start_min' | 'end_min'>;
-type Loaded = {key: string; term: string; view: FriendScheduleView};
+type Loaded = {key: string; term: string; view: FriendScheduleView; failed?: boolean};
 const MIN_FREE = 30; // shorter gaps are not worth meeting up for
 
 /** Gaps between classes on one day when neither of us is busy. */
@@ -58,7 +58,7 @@ export default function FriendSchedulePage() {
       let shown: Omit<Loaded, 'key'> = {term: currentTerm ?? planTerm, view: {access: 'none'}};
       for (const term of [...new Set([currentTerm, planTerm])]) {
         if (!term) continue;
-        const view = await loadFriendSchedule(friend, term).catch((): FriendScheduleView => ({access: 'none'}));
+        const view = await loadFriendSchedule(friend, term);
         if (view.access !== 'none' && shown.view.access === 'none') shown = {term, view};
         if (view.access === 'full' && view.items.length) {
           shown = {term, view};
@@ -67,11 +67,16 @@ export default function FriendSchedulePage() {
       }
       if (active) setLoaded({key, ...shown});
     };
-    void load();
-    window.addEventListener('focus', load);
+    const refresh = () => {
+      void load().catch(() => {
+        if (active) setLoaded({key, term: currentTerm ?? planTerm, view: {access: 'none'}, failed: true});
+      });
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
     return () => {
       active = false;
-      window.removeEventListener('focus', load);
+      window.removeEventListener('focus', refresh);
     };
   }, [friend, key, currentTerm, planTerm, terms.length]);
 
@@ -120,7 +125,7 @@ export default function FriendSchedulePage() {
             <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{termLabel}</span>
           </div>
         </div>
-        {access !== 'none' && (
+        {items.length > 0 && (
           <div style={s('margin-left: 10px; min-height: 56px; padding: 0 8px 0 16px; border-radius: 20px; background: #FFFFFF; display: flex; align-items: center; justify-content: space-between; gap: 10px')}>
             <span style={s('display: flex; flex-direction: column')}><span style={s('font-size: 15px; font-weight: 900')}>Compare with mine</span><span style={s(`font-size: 13px; font-weight: 800; color: ${on ? '#355A1F' : '#5F5A55'}`)}>{summary}</span></span>
             <Switch on={on} label="Compare with my schedule" onToggle={() => setOn(!on)} />
@@ -129,6 +134,7 @@ export default function FriendSchedulePage() {
       </header>
 
       <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 10px 14px 12px 6px')}>
+        {items.length > 0 && <>
         <DayHeads />
         <div style={s('display: flex')}>
           <HourAxis start={start} end={end} H={H} />
@@ -157,8 +163,11 @@ export default function FriendSchedulePage() {
           <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 18px; height: 12px; box-sizing: border-box; border-radius: 4px; border: 1.5px dashed #1D1B1A')} />You</span>
           <span style={s('display: flex; align-items: center; gap: 6px')}><span aria-hidden="true" style={s('width: 18px; height: 12px; border-radius: 4px; background: #E3F0DA')} />Both free</span>
         </div>
-        {result && access === 'none' && <EmptyNote>This schedule isn’t available to you.</EmptyNote>}
-        {result && access !== 'none' && items.length === 0 && <EmptyNote>{friend?.name ?? 'Your friend'} hasn’t saved a schedule for {termLabel} yet.</EmptyNote>}
+        </>}
+        {!result && <EmptyNote role="status">{friend ? 'Loading schedule…' : 'This schedule is available after the friend request is accepted.'}</EmptyNote>}
+        {result?.failed && <EmptyNote role="alert">Couldn’t load the schedule. Reload to try again.</EmptyNote>}
+        {result && !result.failed && access === 'none' && <EmptyNote>This schedule is available after the friend request is accepted.</EmptyNote>}
+        {result && access === 'full' && items.length === 0 && <EmptyNote>{friend?.name ?? 'Your friend'} has no classes with meeting times or saved plan for {termLabel || 'this semester'}.</EmptyNote>}
       </main>
     </Frame>
   );

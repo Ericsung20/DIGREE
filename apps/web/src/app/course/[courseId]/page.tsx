@@ -67,7 +67,7 @@ function CourseDetail() {
   const stats = usePostStats(posts.map((post) => post.id));
   const top = [...posts].sort((a, b) => (stats[b.id]?.score ?? 0) - (stats[a.id]?.score ?? 0) || b.created_at.localeCompare(a.created_at)).slice(0, 2);
 
-  const code = course?.code ?? record?.course_code ?? planned?.course_code ?? '';
+  const code = course?.display_code ?? course?.code ?? record?.course_code ?? planned?.course_code ?? '';
   const label = section?.label ?? entry?.bundle_id ?? '';
   const parts = /^([A-Za-z]+)\s+(\S.*)$/.exec(label);
   const upcoming = term === currentTerm ? nextClass(meetings, now) : null;

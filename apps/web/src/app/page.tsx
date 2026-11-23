@@ -64,12 +64,12 @@ function Schedule() {
   const details = useCourseDetails([...mine, ...planned].map((entry) => entry.course_id));
   const entries: Entry[] = view === 'plans'
     ? planned.map((entry, i) => ({
-      course_id: entry.course_id, code: entry.course_code, name: details[entry.course_id]?.title ?? entry.course_code, credits: entry.credits,
+      course_id: entry.course_id, code: details[entry.course_id]?.display_code ?? entry.course_code, name: details[entry.course_id]?.title ?? entry.course_code, credits: entry.credits,
       section: sections[bundleKey({...entry, term})]?.label ?? entry.bundle_id, meetings: entry.meetings, tone: TONES[i % TONES.length],
     }))
     : mine.map((record, i) => {
       const section = sections[bundleKey(record)];
-      const code = record.course_code ?? details[record.course_id]?.code ?? record.course_id;
+      const code = details[record.course_id]?.display_code ?? record.course_code ?? details[record.course_id]?.code ?? record.course_id;
       return {
         course_id: record.course_id, code, name: details[record.course_id]?.title ?? code, credits: record.credits,
         section: section?.label ?? record.bundle_id ?? '—', meetings: section?.meetings ?? [], tone: term === currentTerm ? toneOf(record.course_id) : TONES[i % TONES.length],

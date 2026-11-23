@@ -65,7 +65,7 @@ export async function addCourseRecord(draft: CourseRecordDraft, currentTerm: str
   // course_code is display-only and not a column, so it is left out of the insert.
   const {term, course_id, credits, status, bundle_id, counts_toward_major, source} = draft;
   const row = {term, course_id, credits, status, bundle_id, counts_toward_major, source, user_id: auth.user.id};
-  const {data, error} = await db.from('user_course_records').insert(row).select(COLUMNS).single();
+  const {data, error} = await db.from(status === 'planned' ? 'planner_courses' : 'course_attempts').insert(row).select(COLUMNS).single();
   if (error) return error.message;
   put([...current(), fromRow(data as unknown as Row)]);
   return null;

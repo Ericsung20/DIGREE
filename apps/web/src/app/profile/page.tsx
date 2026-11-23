@@ -10,6 +10,7 @@ import {displayName, initials, useAccount} from '@/lib/data/account';
 import {useStore, writeStore} from '@/lib/data/local-store';
 import {useAcademicOptions, useProfile} from '@/lib/data/profile';
 import {useRequirements} from '@/lib/data/requirements';
+import {useTransferCredits} from '@/lib/data/transfer-credits';
 import {s} from '@/lib/ui/css';
 import {plural} from '@/lib/ui/format';
 
@@ -39,6 +40,7 @@ export default function ProfilePage() {
   const {colleges} = useAcademicOptions();
   const profile = useProfile();
   const {program, percent, remaining, totals} = useRequirements();
+  const transfers = useTransferCredits();
   const notify = useStore<boolean>(NOTIFY, true);
   const [mounted, setMounted] = useState(false);
   const [shown, setShown] = useState(0);
@@ -94,6 +96,7 @@ export default function ProfilePage() {
           <h2 style={s(GROUP)}>Course history</h2>
           <Link href={history} className="row" style={s(ROW + DIVIDER)}><span style={s(KEY)}>Taking now</span><span style={s(VALUE)}>{plural(totals.now, 'course')} · {totals.nowCredits} cr</span></Link>
           <Link href={history} className="row" style={s(ROW)}><span style={s(KEY)}>Taken</span><span style={s(VALUE)}>{plural(totals.taken, 'course')} · {totals.takenCredits} cr</span></Link>
+          <Link href="/profile/transfer" className="row" style={s(ROW)}><span style={s(KEY)}>Transfer credit</span><span style={s(VALUE)}>{plural(transfers.length, 'record')} · Add / edit</span></Link>
         </section>
 
         <section className="rise" style={s('flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; animation-delay: 240ms')}>

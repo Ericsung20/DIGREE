@@ -4,6 +4,8 @@ Next.js (App Router) + TypeScript. The screens follow the DIGREE design boards (
 
 ## Run
 
+For the team's shared database, use `.env.shared.example` and follow [shared development](../../docs/shared-development.md). `.env.example` below is the browser-only mock preview. Changing the environment requires restarting the dev server.
+
 ```bash
 cd apps/web
 npm install
@@ -55,5 +57,6 @@ The DIG form caps target credits at 18. Major courses default to a soft 2–4 pr
 | Community Feed, Post Detail, New Post | `/community`, `/community/[postId]`, `/community/new` |
 | Room List, Chat Room | `/chat`, `/chat/[roomId]` |
 | Edit Profile, Degree Requirements | `/profile`, `/profile/requirements` |
+| Recognized transfer credits | `/profile/transfer` |
 
 Shared pieces live in `src/components/dg.tsx`. `s()` in `src/lib/ui/css.ts` turns a CSS declaration string into a React style object.

@@ -1,5 +1,11 @@
 # DIGREE local database
 
+The team uses the existing DIGREE hosted project as **shared development**, not a separately launched production service. [Environment assignments](environments.json) and [team setup](../docs/shared-development.md) are authoritative. Do not reset the hosted dataset.
+
+For isolated tests use `powershell -File scripts/dev-db.ps1 start`, then `powershell -File scripts/dev-db.ps1 test` and `powershell -File scripts/check-dev.ps1` from the repository root. These commands use a separate stack on API port 55321. The older commands below target the legacy local stack; `db reset` replaces its data and is not a routine startup command.
+
+For catalog imports, `apply-uw-term.ps1` defaults to the isolated dev stack. Targeting the shared project additionally requires `-AllowSharedData`. Fresh catalog imports preserve all public search rows in private ingestion snapshots, including unsupported planner variants. Existing cross-list aliases were backfilled without fetching the catalog again.
+
 Run these commands from the repository root with Docker running and Node.js 20 or newer. The CLI commands below use version 3.1.0.
 
 ```powershell

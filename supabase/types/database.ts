@@ -9,6 +9,62 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      academic_profile_programs: {
+        Row: {
+          catalog_year: number | null;
+          id: string;
+          kind: string;
+          major_slot: number | null;
+          name: string | null;
+          program_id: string | null;
+          supplemental_program_key: string | null;
+          user_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          catalog_year?: number | null;
+          id?: string;
+          kind: string;
+          major_slot?: number | null;
+          name?: string | null;
+          program_id?: string | null;
+          supplemental_program_key?: string | null;
+          user_id: string;
+        };
+        Update: {
+          catalog_year?: number | null;
+          id?: string;
+          kind?: string;
+          major_slot?: number | null;
+          name?: string | null;
+          program_id?: string | null;
+          supplemental_program_key?: string | null;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "academic_profile_programs_program_id_fkey";
+            columns: ["program_id"];
+            isOneToOne: false;
+            referencedRelation: "academic_programs";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "academic_profile_programs_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "academic_profiles";
+            referencedColumns: ["user_id"];
+          },
+          {
+            foreignKeyName: "academic_profile_supplemental_catalog_fkey";
+            columns: ["catalog_year", "supplemental_program_key", "kind"];
+            isOneToOne: false;
+            referencedRelation: "supplemental_program_catalog";
+            referencedColumns: ["catalog_year", "program_key", "kind"];
+          },
+        ];
+      };
       academic_profiles: {
         Row: {
           catalog_year: number;
@@ -225,6 +281,13 @@ export type Database = {
             foreignKeyName: "chat_rooms_course_id_fkey";
             columns: ["course_id"];
             isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "chat_rooms_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
             referencedRelation: "courses";
             referencedColumns: ["id"];
           },
@@ -259,6 +322,7 @@ export type Database = {
           body: string;
           created_at: string;
           id: string;
+          parent_id: string | null;
           post_id: string;
           public_alias: string;
         };
@@ -268,6 +332,7 @@ export type Database = {
           body: string;
           created_at?: string;
           id?: string;
+          parent_id?: string | null;
           post_id: string;
           public_alias?: string;
         };
@@ -276,10 +341,25 @@ export type Database = {
           body?: string;
           created_at?: string;
           id?: string;
+          parent_id?: string | null;
           post_id?: string;
           public_alias?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "comments_parent_in_post";
+            columns: ["parent_id", "post_id"];
+            isOneToOne: false;
+            referencedRelation: "comments";
+            referencedColumns: ["id", "post_id"];
+          },
+          {
+            foreignKeyName: "comments_parent_in_post";
+            columns: ["parent_id", "post_id"];
+            isOneToOne: false;
+            referencedRelation: "community_comments";
+            referencedColumns: ["id", "post_id"];
+          },
           {
             foreignKeyName: "comments_post_id_fkey";
             columns: ["post_id"];
@@ -292,6 +372,43 @@ export type Database = {
             columns: ["post_id"];
             isOneToOne: false;
             referencedRelation: "posts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      course_aliases: {
+        Row: {
+          code: string;
+          course_id: string;
+          observed_at: string;
+          source: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          code: string;
+          course_id: string;
+          observed_at?: string;
+          source: string;
+        };
+        Update: {
+          code?: string;
+          course_id?: string;
+          observed_at?: string;
+          source?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "course_aliases_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "course_aliases_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "courses";
             referencedColumns: ["id"];
           },
         ];
@@ -387,6 +504,13 @@ export type Database = {
             foreignKeyName: "course_grade_stats_course_id_fkey";
             columns: ["course_id"];
             isOneToOne: true;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "course_grade_stats_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: true;
             referencedRelation: "courses";
             referencedColumns: ["id"];
           },
@@ -423,6 +547,13 @@ export type Database = {
             foreignKeyName: "course_instructors_course_id_fkey";
             columns: ["course_id"];
             isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "course_instructors_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
             referencedRelation: "courses";
             referencedColumns: ["id"];
           },
@@ -436,13 +567,93 @@ export type Database = {
         ];
       };
       course_instructors_source_only: {
-        Row: Database["public"]["Tables"]["course_instructors"]["Row"];
+        Row: {
+          bundle_id: string;
+          course_id: string;
+          fetched_at: string;
+          instructors: string[];
+          source_url: string;
+          term: string;
+        };
         ComputedFields: never;
-        Insert: Database["public"]["Tables"]["course_instructors"]["Insert"];
-        Update: Database["public"]["Tables"]["course_instructors"]["Update"];
+        Insert: {
+          bundle_id: string;
+          course_id: string;
+          fetched_at: string;
+          instructors: string[];
+          source_url: string;
+          term: string;
+        };
+        Update: {
+          bundle_id?: string;
+          course_id?: string;
+          fetched_at?: string;
+          instructors?: string[];
+          source_url?: string;
+          term?: string;
+        };
         Relationships: [
           {
             foreignKeyName: "course_instructors_source_only_term_fkey";
+            columns: ["term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      course_offerings: {
+        Row: {
+          breadth: string[] | null;
+          course_id: string;
+          credit_options: number[];
+          fetched_at: string | null;
+          repeatable: boolean;
+          snapshot_kind: string;
+          source: string;
+          term: string;
+          title: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          breadth?: string[] | null;
+          course_id: string;
+          credit_options: number[];
+          fetched_at?: string | null;
+          repeatable: boolean;
+          snapshot_kind: string;
+          source: string;
+          term: string;
+          title?: string | null;
+        };
+        Update: {
+          breadth?: string[] | null;
+          course_id?: string;
+          credit_options?: number[];
+          fetched_at?: string | null;
+          repeatable?: boolean;
+          snapshot_kind?: string;
+          source?: string;
+          term?: string;
+          title?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "course_offerings_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "course_offerings_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "course_offerings_term_fkey";
             columns: ["term"];
             isOneToOne: false;
             referencedRelation: "terms";
@@ -483,6 +694,13 @@ export type Database = {
           term?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "course_requisites_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "course_requisites_course_id_fkey";
             columns: ["course_id"];
@@ -535,28 +753,34 @@ export type Database = {
       };
       degree_progress: {
         Row: {
+          created_at: string;
           credits_remaining: number | null;
           program_id: string;
           requirement_id: string;
           review_status: Database["public"]["Enums"]["degree_review_status"];
           source: Database["public"]["Enums"]["academic_data_source"];
+          updated_at: string;
           user_id: string;
         };
         ComputedFields: never;
         Insert: {
+          created_at?: string;
           credits_remaining?: number | null;
           program_id: string;
           requirement_id: string;
           review_status?: Database["public"]["Enums"]["degree_review_status"];
           source?: Database["public"]["Enums"]["academic_data_source"];
+          updated_at?: string;
           user_id: string;
         };
         Update: {
+          created_at?: string;
           credits_remaining?: number | null;
           program_id?: string;
           requirement_id?: string;
           review_status?: Database["public"]["Enums"]["degree_review_status"];
           source?: Database["public"]["Enums"]["academic_data_source"];
+          updated_at?: string;
           user_id?: string;
         };
         Relationships: [
@@ -609,6 +833,20 @@ export type Database = {
           record_id?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "grade_entries_record_id_fkey";
+            columns: ["record_id"];
+            isOneToOne: true;
+            referencedRelation: "course_attempts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "grade_entries_record_id_fkey";
+            columns: ["record_id"];
+            isOneToOne: true;
+            referencedRelation: "planner_courses";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "grade_entries_record_id_fkey";
             columns: ["record_id"];
@@ -710,6 +948,40 @@ export type Database = {
           },
         ];
       };
+      post_votes: {
+        Row: {
+          post_id: string;
+          value: number;
+          voter_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          post_id: string;
+          value: number;
+          voter_id?: string;
+        };
+        Update: {
+          post_id?: string;
+          value?: number;
+          voter_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "post_votes_post_id_fkey";
+            columns: ["post_id"];
+            isOneToOne: false;
+            referencedRelation: "community_posts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "post_votes_post_id_fkey";
+            columns: ["post_id"];
+            isOneToOne: false;
+            referencedRelation: "posts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       posts: {
         Row: {
           author_id: string;
@@ -719,6 +991,7 @@ export type Database = {
           created_at: string;
           id: string;
           public_alias: string;
+          title: string | null;
         };
         ComputedFields: never;
         Insert: {
@@ -729,6 +1002,7 @@ export type Database = {
           created_at?: string;
           id?: string;
           public_alias?: string;
+          title?: string | null;
         };
         Update: {
           author_id?: string;
@@ -738,8 +1012,16 @@ export type Database = {
           created_at?: string;
           id?: string;
           public_alias?: string;
+          title?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: "posts_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "posts_course_id_fkey";
             columns: ["course_id"];
@@ -778,6 +1060,104 @@ export type Database = {
             columns: ["program_id"];
             isOneToOne: true;
             referencedRelation: "academic_programs";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      program_versions: {
+        Row: {
+          catalog_year: number;
+          college_id: string | null;
+          fetched_at: string | null;
+          id: string;
+          kind: string;
+          name: string;
+          program_id: string | null;
+          source_url: string | null;
+          supplemental_program_key: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          catalog_year: number;
+          college_id?: string | null;
+          fetched_at?: string | null;
+          id: string;
+          kind: string;
+          name: string;
+          program_id?: string | null;
+          source_url?: string | null;
+          supplemental_program_key?: string | null;
+        };
+        Update: {
+          catalog_year?: number;
+          college_id?: string | null;
+          fetched_at?: string | null;
+          id?: string;
+          kind?: string;
+          name?: string;
+          program_id?: string | null;
+          source_url?: string | null;
+          supplemental_program_key?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "program_versions_catalog_year_supplemental_program_key_fkey";
+            columns: ["catalog_year", "supplemental_program_key"];
+            isOneToOne: false;
+            referencedRelation: "supplemental_program_catalog";
+            referencedColumns: ["catalog_year", "program_key"];
+          },
+          {
+            foreignKeyName: "program_versions_college_id_fkey";
+            columns: ["college_id"];
+            isOneToOne: false;
+            referencedRelation: "colleges";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "program_versions_program_id_fkey";
+            columns: ["program_id"];
+            isOneToOne: true;
+            referencedRelation: "academic_programs";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      requirement_groups: {
+        Row: {
+          definition: NonNullable<Json>;
+          fetched_at: string | null;
+          heading: string;
+          id: string;
+          position: number;
+          program_version_id: string;
+          source_url: string | null;
+        };
+        ComputedFields: never;
+        Insert: {
+          definition: NonNullable<Json>;
+          fetched_at?: string | null;
+          heading: string;
+          id: string;
+          position: number;
+          program_version_id: string;
+          source_url?: string | null;
+        };
+        Update: {
+          definition?: NonNullable<Json>;
+          fetched_at?: string | null;
+          heading?: string;
+          id?: string;
+          position?: number;
+          program_version_id?: string;
+          source_url?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "requirement_groups_program_version_id_fkey";
+            columns: ["program_version_id"];
+            isOneToOne: false;
+            referencedRelation: "program_versions";
             referencedColumns: ["id"];
           },
         ];
@@ -824,28 +1204,37 @@ export type Database = {
       };
       saved_schedules: {
         Row: {
+          created_at: string;
           id: string;
           mode: Database["public"]["Enums"]["schedule_mode"];
           name: string;
           source_request_id: string | null;
+          state: string;
           term: string;
+          updated_at: string;
           user_id: string;
         };
         ComputedFields: never;
         Insert: {
+          created_at?: string;
           id?: string;
           mode: Database["public"]["Enums"]["schedule_mode"];
           name: string;
           source_request_id?: string | null;
+          state?: string;
           term: string;
+          updated_at?: string;
           user_id: string;
         };
         Update: {
+          created_at?: string;
           id?: string;
           mode?: Database["public"]["Enums"]["schedule_mode"];
           name?: string;
           source_request_id?: string | null;
+          state?: string;
           term?: string;
+          updated_at?: string;
           user_id?: string;
         };
         Relationships: [
@@ -882,7 +1271,9 @@ export type Database = {
           bundle_id: string;
           course_id: string;
           instructor_score: number | null;
+          instructors: string[];
           seat_status: Database["public"]["Enums"]["seat_status"];
+          section_label: string | null;
           term: string;
         };
         ComputedFields: never;
@@ -890,17 +1281,28 @@ export type Database = {
           bundle_id: string;
           course_id: string;
           instructor_score?: number | null;
+          instructors?: string[];
           seat_status?: Database["public"]["Enums"]["seat_status"];
+          section_label?: string | null;
           term: string;
         };
         Update: {
           bundle_id?: string;
           course_id?: string;
           instructor_score?: number | null;
+          instructors?: string[];
           seat_status?: Database["public"]["Enums"]["seat_status"];
+          section_label?: string | null;
           term?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "section_bundles_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "section_bundles_course_id_fkey";
             columns: ["course_id"];
@@ -920,8 +1322,8 @@ export type Database = {
       supplemental_program_catalog: {
         Row: {
           catalog_year: number;
-          course_groups: Json;
-          declaration_groups: Json;
+          course_groups: NonNullable<Json>;
+          declaration_groups: NonNullable<Json>;
           fetched_at: string;
           kind: string;
           name: string;
@@ -931,8 +1333,8 @@ export type Database = {
         ComputedFields: never;
         Insert: {
           catalog_year: number;
-          course_groups: Json;
-          declaration_groups: Json;
+          course_groups: NonNullable<Json>;
+          declaration_groups: NonNullable<Json>;
           fetched_at: string;
           kind: string;
           name: string;
@@ -941,8 +1343,8 @@ export type Database = {
         };
         Update: {
           catalog_year?: number;
-          course_groups?: Json;
-          declaration_groups?: Json;
+          course_groups?: NonNullable<Json>;
+          declaration_groups?: NonNullable<Json>;
           fetched_at?: string;
           kind?: string;
           name?: string;
@@ -969,6 +1371,71 @@ export type Database = {
           label?: string;
         };
         Relationships: [];
+      };
+      transfer_credits: {
+        Row: {
+          awarded_term: string;
+          created_at: string;
+          credits: number;
+          equivalent_course_id: string | null;
+          id: string;
+          institution: string;
+          notes: string;
+          source: string;
+          source_course: string;
+          updated_at: string;
+          user_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          awarded_term: string;
+          created_at?: string;
+          credits: number;
+          equivalent_course_id?: string | null;
+          id?: string;
+          institution: string;
+          notes?: string;
+          source?: string;
+          source_course: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Update: {
+          awarded_term?: string;
+          created_at?: string;
+          credits?: number;
+          equivalent_course_id?: string | null;
+          id?: string;
+          institution?: string;
+          notes?: string;
+          source?: string;
+          source_course?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "transfer_credits_awarded_term_fkey";
+            columns: ["awarded_term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "transfer_credits_equivalent_course_id_fkey";
+            columns: ["equivalent_course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "transfer_credits_equivalent_course_id_fkey";
+            columns: ["equivalent_course_id"];
+            isOneToOne: false;
+            referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       user_blocks: {
         Row: {
@@ -1022,6 +1489,13 @@ export type Database = {
           user_id?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: "user_course_records_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
           {
             foreignKeyName: "user_course_records_course_id_fkey";
             columns: ["course_id"];
@@ -1084,11 +1558,40 @@ export type Database = {
       };
     };
     Views: {
+      catalog_courses: {
+        Row: {
+          aliases: string[] | null;
+          breadth: string[] | null;
+          code: string;
+          credit_options: number[];
+          display_code: string | null;
+          fetched_at: string | null;
+          id: string;
+          repeatable: boolean;
+          source: string;
+          title: string | null;
+        };
+        ComputedFields: never;
+        Relationships: [];
+      };
+      catalog_instructors: {
+        Row: {
+          bundle_id: string | null;
+          course_id: string | null;
+          fetched_at: string | null;
+          instructors: string[] | null;
+          source_url: string | null;
+          term: string | null;
+        };
+        ComputedFields: never;
+        Relationships: [];
+      };
       community_comments: {
         Row: {
           body: string;
           created_at: string;
           id: string;
+          parent_id: string | null;
           post_id: string;
           public_alias: string;
         };
@@ -1097,6 +1600,7 @@ export type Database = {
           body?: string | null;
           created_at?: string | null;
           id?: string | null;
+          parent_id?: string | null;
           post_id?: string | null;
           public_alias?: string | null;
         };
@@ -1104,10 +1608,25 @@ export type Database = {
           body?: string | null;
           created_at?: string | null;
           id?: string | null;
+          parent_id?: string | null;
           post_id?: string | null;
           public_alias?: string | null;
         };
         Relationships: [
+          {
+            foreignKeyName: "comments_parent_in_post";
+            columns: ["parent_id", "post_id"];
+            isOneToOne: false;
+            referencedRelation: "comments";
+            referencedColumns: ["id", "post_id"];
+          },
+          {
+            foreignKeyName: "comments_parent_in_post";
+            columns: ["parent_id", "post_id"];
+            isOneToOne: false;
+            referencedRelation: "community_comments";
+            referencedColumns: ["id", "post_id"];
+          },
           {
             foreignKeyName: "comments_post_id_fkey";
             columns: ["post_id"];
@@ -1132,6 +1651,7 @@ export type Database = {
           created_at: string;
           id: string;
           public_alias: string;
+          title: string | null;
         };
         ComputedFields: never;
         Insert: {
@@ -1141,6 +1661,7 @@ export type Database = {
           created_at?: string | null;
           id?: string | null;
           public_alias?: string | null;
+          title?: string | null;
         };
         Update: {
           body?: string | null;
@@ -1149,13 +1670,153 @@ export type Database = {
           created_at?: string | null;
           id?: string | null;
           public_alias?: string | null;
+          title?: string | null;
         };
         Relationships: [
           {
             foreignKeyName: "posts_course_id_fkey";
             columns: ["course_id"];
             isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "posts_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
             referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      course_attempts: {
+        Row: {
+          bundle_id: string | null;
+          counts_toward_major: boolean;
+          course_id: string;
+          credits: number;
+          id: string;
+          source: Database["public"]["Enums"]["academic_data_source"];
+          status: Database["public"]["Enums"]["course_record_status"];
+          term: string;
+          user_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          bundle_id?: string | null;
+          counts_toward_major?: boolean | null;
+          course_id?: string | null;
+          credits?: number | null;
+          id?: string | null;
+          source?: Database["public"]["Enums"]["academic_data_source"] | null;
+          status?: Database["public"]["Enums"]["course_record_status"] | null;
+          term?: string | null;
+          user_id?: string | null;
+        };
+        Update: {
+          bundle_id?: string | null;
+          counts_toward_major?: boolean | null;
+          course_id?: string | null;
+          credits?: number | null;
+          id?: string | null;
+          source?: Database["public"]["Enums"]["academic_data_source"] | null;
+          status?: Database["public"]["Enums"]["course_record_status"] | null;
+          term?: string | null;
+          user_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "user_course_records_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_course_records_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_course_records_term_course_id_bundle_id_fkey";
+            columns: ["term", "course_id", "bundle_id"];
+            isOneToOne: false;
+            referencedRelation: "section_bundles";
+            referencedColumns: ["term", "course_id", "bundle_id"];
+          },
+          {
+            foreignKeyName: "user_course_records_term_fkey";
+            columns: ["term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      planner_courses: {
+        Row: {
+          bundle_id: string | null;
+          counts_toward_major: boolean;
+          course_id: string;
+          credits: number;
+          id: string;
+          source: Database["public"]["Enums"]["academic_data_source"];
+          status: Database["public"]["Enums"]["course_record_status"];
+          term: string;
+          user_id: string;
+        };
+        ComputedFields: never;
+        Insert: {
+          bundle_id?: string | null;
+          counts_toward_major?: boolean | null;
+          course_id?: string | null;
+          credits?: number | null;
+          id?: string | null;
+          source?: Database["public"]["Enums"]["academic_data_source"] | null;
+          status?: Database["public"]["Enums"]["course_record_status"] | null;
+          term?: string | null;
+          user_id?: string | null;
+        };
+        Update: {
+          bundle_id?: string | null;
+          counts_toward_major?: boolean | null;
+          course_id?: string | null;
+          credits?: number | null;
+          id?: string | null;
+          source?: Database["public"]["Enums"]["academic_data_source"] | null;
+          status?: Database["public"]["Enums"]["course_record_status"] | null;
+          term?: string | null;
+          user_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "user_course_records_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "catalog_courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_course_records_course_id_fkey";
+            columns: ["course_id"];
+            isOneToOne: false;
+            referencedRelation: "courses";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "user_course_records_term_course_id_bundle_id_fkey";
+            columns: ["term", "course_id", "bundle_id"];
+            isOneToOne: false;
+            referencedRelation: "section_bundles";
+            referencedColumns: ["term", "course_id", "bundle_id"];
+          },
+          {
+            foreignKeyName: "user_course_records_term_fkey";
+            columns: ["term"];
+            isOneToOne: false;
+            referencedRelation: "terms";
             referencedColumns: ["id"];
           },
         ];
@@ -1182,11 +1843,61 @@ export type Database = {
           },
         ];
       };
+      student_programs: {
+        Row: {
+          catalog_year: number | null;
+          id: string | null;
+          is_primary: boolean | null;
+          kind: string | null;
+          name: string | null;
+          program_id: string | null;
+          program_version_id: string | null;
+          source_url: string | null;
+          user_id: string | null;
+        };
+        ComputedFields: never;
+        Relationships: [];
+      };
     };
     Functions: {
       can_view_schedule: {
         Args: { owner: string; viewer: string };
         Returns: boolean;
+      };
+      community_vote_totals: {
+        Args: { p_ids: string[] };
+        Returns: {
+          my_vote: number;
+          post_id: string;
+          score: number;
+        }[];
+      };
+      dig_designation_candidates: {
+        Args: { p_codes: string[]; p_limit?: number; p_term: string };
+        Returns: {
+          course_id: string;
+        }[];
+      };
+      find_friend_by_netid: {
+        Args: { p_netid: string };
+        Returns: {
+          id: string;
+          netid: string;
+        }[];
+      };
+      friend_enrolled_schedule: {
+        Args: { p_owner: string; p_term: string };
+        Returns: {
+          course_code: string;
+          meetings: Json;
+        }[];
+      };
+      friend_netids: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          id: string;
+          netid: string;
+        }[];
       };
       is_room_member: { Args: { room_id: string }; Returns: boolean };
       join_chat_room: { Args: { room_id: string }; Returns: string };
@@ -1201,6 +1912,15 @@ export type Database = {
           term: string;
           title: string;
         }[];
+      };
+      save_schedule: {
+        Args: {
+          p_items: Json;
+          p_name?: string;
+          p_request_id: string;
+          p_term: string;
+        };
+        Returns: string;
       };
       schedule_free_busy: {
         Args: {
@@ -1217,6 +1937,36 @@ export type Database = {
       schedule_visibility: {
         Args: { owner: string; viewer: string };
         Returns: Database["public"]["Enums"]["visibility"];
+      };
+      search_catalog_courses: {
+        Args: { p_limit?: number; p_query: string };
+        Returns: {
+          aliases: string[] | null;
+          breadth: string[] | null;
+          code: string;
+          credit_options: number[];
+          display_code: string | null;
+          fetched_at: string | null;
+          id: string;
+          repeatable: boolean;
+          source: string;
+          title: string | null;
+        }[];
+        SetofOptions: {
+          from: "*";
+          to: "catalog_courses";
+          isOneToOne: false;
+          isSetofReturn: true;
+        };
+      };
+      send_friend_request: { Args: { p_netid: string }; Returns: string };
+      set_community_vote: {
+        Args: { p_post: string; p_value: number };
+        Returns: {
+          my_vote: number;
+          post_id: string;
+          score: number;
+        }[];
       };
     };
     Enums: {

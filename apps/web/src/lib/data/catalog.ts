@@ -3,6 +3,7 @@ import request from '../../mocks/request.json';
 import {IS_MOCK, supabase} from '../supabase';
 import {byDayThenStart, minToLabel} from '../time';
 import {displayTerm} from '../terms';
+import {expandCourseCode, normalizeCourseCode} from '../course-identity';
 import {useRemote} from './local-store';
 
 // Mock catalog. Row shapes follow supabase/DB_HANDOFF.md (terms, colleges, academic_programs, courses, section_bundles).
@@ -47,7 +48,8 @@ export const useTerms: () => Term[] = IS_MOCK ? () => TERMS : () => useRemote('t
 /** Null when no term is flagged current; self-reported enrollment is then unavailable. Never guessed. */
 export const currentTermOf = (terms: Term[]) => terms.find((t) => t.is_current)?.id ?? null;
 
-export type CourseHit = {id: string; code: string; title: string | null; credit_options: number[]};
+export type CourseHit = {id: string; code: string; display_code?: string; aliases?: string[]; repeatable?: boolean; title: string | null; credit_options: number[]};
+const HIT_COLUMNS = 'id, code, display_code, aliases, title, credit_options, repeatable';
 
 // Synthetic titles for the mock catalog, so screens that show a course name have one.
 const MOCK_TITLES: Record<string, string> = {
@@ -67,7 +69,7 @@ export function useCourseInfo(id: string | null) {
       const course = COURSES.find((item) => item.id === id);
       return course ? mockHit(course) : null;
     }
-    const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').eq('id', id).maybeSingle();
+    const {data, error} = await supabase().from('catalog_courses').select(HIT_COLUMNS).eq('id', id).maybeSingle();
     if (error) throw error;
     return data;
   });
@@ -80,7 +82,7 @@ export function useCourseDetails(ids: string[]): Record<string, CourseHit> {
   return useRemote(`courses:${unique.join(',')}`, NO_COURSES, async () => {
     if (!unique.length) return NO_COURSES;
     if (IS_MOCK) return Object.fromEntries(COURSES.filter((course) => unique.includes(course.id)).map((course) => [course.id, mockHit(course)]));
-    const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').in('id', unique);
+    const {data, error} = await supabase().from('catalog_courses').select(HIT_COLUMNS).in('id', unique);
     if (error) throw error;
     return Object.fromEntries((data as CourseHit[]).map((course) => [course.id, course]));
   });
@@ -107,25 +109,25 @@ export function useBuildingNames(ids: string[]) {
 /** Course search by code. Real mode needs 2+ characters and returns at most 20 rows. */
 export async function searchCourses(q: string): Promise<CourseHit[]> {
   // Keep LIKE wildcards and filter syntax out. "CS 577" is how the app abbreviates COMP SCI, so accept it back.
-  const needle = q.trim().replace(/[%_,()]/g, '').replace(/^cs\s*(?=\d|$)/i, 'COMP SCI ').trim();
+  const needle = normalizeCourseCode(q.replace(/[%_,()]/g, ''));
   if (IS_MOCK) return needle ? COURSES.filter((c) => c.code.toLowerCase().includes(needle.toLowerCase())).map(mockHit) : [];
   if (needle.length < 2) return [];
-  const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').ilike('code', `%${needle}%`).order('code').limit(20);
+  const {data, error} = await supabase().rpc('search_catalog_courses', {p_query: needle, p_limit: 20});
   if (error) throw error;
   return data as CourseHit[];
 }
 
 /** Catalog courses with exactly these codes. Codes the catalog does not know are simply absent. */
 export async function findCoursesByCodes(codes: string[]): Promise<CourseHit[]> {
-  const unique = [...new Set(codes)];
+  const unique = [...new Set(codes.flatMap(expandCourseCode))];
   if (IS_MOCK) return COURSES.filter((course) => unique.includes(course.code)).map(mockHit);
   const found: CourseHit[] = [];
   for (let start = 0; start < unique.length; start += 100) {
-    const {data, error} = await supabase().from('courses').select('id, code, title, credit_options').in('code', unique.slice(start, start + 100));
+    const {data, error} = await supabase().from('catalog_courses').select(HIT_COLUMNS).overlaps('aliases', unique.slice(start, start + 100));
     if (error) throw error;
     found.push(...(data as CourseHit[]));
   }
-  return found;
+  return [...new Map(found.map(course => [course.id, course])).values()];
 }
 
 /** Section bundles of one course in one term, with their meetings. Empty when the catalog has none. */
@@ -157,9 +159,9 @@ export function useCourseCodes(ids: string[]): Record<string, string> {
   const unique = [...new Set(ids)].sort();
   return useRemote(`codes:${unique.join(',')}`, NO_CODES, async () => {
     if (IS_MOCK || unique.length === 0) return Object.fromEntries(COURSES.filter((c) => unique.includes(c.id)).map((c) => [c.id, c.code]));
-    const {data, error} = await supabase().from('courses').select('id, code').in('id', unique);
+    const {data, error} = await supabase().from('catalog_courses').select('id, code, display_code').in('id', unique);
     if (error) throw error;
-    return Object.fromEntries((data as {id: string; code: string}[]).map((c) => [c.id, c.code]));
+    return Object.fromEntries((data as {id: string; code: string; display_code: string}[]).map((c) => [c.id, c.display_code ?? c.code]));
   });
 }
 

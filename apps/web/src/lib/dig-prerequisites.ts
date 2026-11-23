@@ -18,6 +18,8 @@ type Evidence = {
   undergraduate: boolean;
 };
 
+export type RecognizedTransfer = {equivalent_course_id: string | null; awarded_term: string; courses: {code: string} | null};
+
 const normalize = (text: string) => text.replace(/[\u200b\u200c\u200d]/g, '').replace(/\s+/g, ' ').trim();
 const code = (text: string) => normalize(text).toUpperCase();
 
@@ -27,6 +29,7 @@ export function requisiteEvidence(
   aliases: ReadonlyMap<string, readonly string[]>,
   required: {id: string; code: string}[],
   undergraduate: boolean,
+  transfers: RecognizedTransfer[] = [],
 ): Evidence {
   const evidence: Evidence = {completed: new Map(), inProgress: new Set(), concurrent: new Set(), undergraduate};
   const codesFor = (id: string, canonical?: string) => [...(aliases.get(id) ?? []), ...(canonical ? [canonical] : [])].map(code);
@@ -44,6 +47,13 @@ export function requisiteEvidence(
     if (record.status === 'enrolled_self_reported' && record.terms?.is_current) {
       const group = record.term === term ? evidence.concurrent : record.term < term ? evidence.inProgress : null;
       for (const alias of codes) group?.add(alias);
+    }
+  }
+  for (const transfer of transfers) {
+    if (!transfer.equivalent_course_id || transfer.awarded_term > term) continue;
+    for (const alias of codesFor(transfer.equivalent_course_id, transfer.courses?.code)) {
+      // Credit equivalence supplies no UW grade or current enrollment evidence.
+      evidence.completed.set(alias, [...(evidence.completed.get(alias) ?? []), null]);
     }
   }
   return evidence;

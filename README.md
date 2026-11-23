@@ -8,7 +8,32 @@ DIGREE helps UW–Madison students plan class schedules. The web app reads cours
 | FastAPI optimizer | [Optimizer README](apps/optimizer/README.md) |
 | Supabase schema, seed data, and imports | [Database README](supabase/README.md) |
 
-## Local development
+## Shared development (the team default)
+
+Both developers run the web app and optimizer on their own machines and connect to the same existing DIGREE Supabase project. Docker is not needed for this workflow. Follow [the team setup guide](docs/shared-development.md). Project references and their intended use are recorded in [environments.json](supabase/environments.json); a separate production project will be created before public launch.
+
+```powershell
+git clone --branch db_fix https://github.com/Ericsung20/DIGREE.git DIGREE-dev
+cd DIGREE-dev/apps/web
+npm ci
+Copy-Item .env.shared.example .env.local
+```
+
+Fill the public client key in `.env.local`, run the optimizer at `http://127.0.0.1:8000` in another terminal, and run `npm run dev` from `apps/web`. Open [localhost:3000](http://localhost:3000). Never use an admin/service-role key in the web environment.
+
+## Isolated regression database
+
+Docker is used for disposable local database tests, not shared team data. From the repository root:
+
+```powershell
+powershell -File scripts/dev-db.ps1 start
+powershell -File scripts/dev-db.ps1 test
+powershell -File scripts/check-dev.ps1
+```
+
+This stack uses project ID `DIGREE-dev` and API port `55321`. It does not reset the shared cloud database or an existing local stack. See [the database architecture and rollout notes](docs/database-architecture.md).
+
+## Browser-only preview
 
 For a browser-only preview, install the web dependencies and use the sample environment:
 

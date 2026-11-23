@@ -8,6 +8,7 @@ import {currentTermOf, getBundles, previousTermOf, searchCourses, useBundleLists
 import {addCourseRecord, changeCourseSection, removeCourseRecord, useCourseRecords} from '@/lib/data/course-records';
 import {s} from '@/lib/ui/css';
 import {useCourseTone} from '@/lib/ui/palette';
+import {displayCourseCode} from '@/lib/course-identity';
 
 const CSS = `
 button,input{font:inherit}
@@ -45,7 +46,7 @@ function CourseHistory() {
   const past = records.filter((record) => record.status === 'completed');
   const details = useCourseDetails([...now, ...past].map((record) => record.course_id));
   const sections = useBundleLists(currentTerm, now.map((record) => record.course_id));
-  const code = (record: (typeof records)[number]) => record.course_code ?? details[record.course_id]?.code ?? record.course_id;
+  const code = (record: (typeof records)[number]) => details[record.course_id] ? displayCourseCode(details[record.course_id]) : record.course_code ?? record.course_id;
   const nowTab = tab === 'now';
   const taken = new Set((nowTab ? now : past).map((record) => record.course_id));
   const suggestions = hits.filter((hit) => !taken.has(hit.id)).slice(0, 6);
@@ -114,7 +115,7 @@ function CourseHistory() {
           <div style={s('display: flex; flex-wrap: wrap; gap: 8px')}>
             {suggestions.map((hit) => (
               <button key={hit.id} type="button" className="press" onClick={() => void add(hit)} style={s('height: 38px; padding: 0 14px; box-sizing: border-box; border-radius: 19px; border: 2px dashed #C9C3BC; background: transparent; color: #3D3936; font-size: 14px; font-weight: 800; display: inline-flex; align-items: center; gap: 6px; cursor: pointer')}>
-                <Svg size={14} sw={3} join={false}>{ICON.plus}</Svg>{hit.code}
+                <Svg size={14} sw={3} join={false}>{ICON.plus}</Svg>{displayCourseCode(hit)}
               </button>
             ))}
           </div>

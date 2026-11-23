@@ -35,10 +35,10 @@ test.each([
             ? preferred.length ? catalog.map(row => published ? {...row, breadth: null} : row) : [cs400]
             : planned;
         }
-        if (table === 'user_course_records' && columns === 'course_id, counts_toward_major') {
+        if (table === 'planner_courses' && columns === 'course_id, counts_toward_major') {
           data = planned.map(({id}) => ({course_id: id, counts_toward_major: false}));
         }
-        if (table === 'academic_profiles') data = {program_id: 'qa-program', academic_programs: {label: 'Computer Sciences, BS'}};
+        if (table === 'student_programs') data = [{program_id: 'qa-program', kind: 'major', is_primary: true, name: 'Computer Sciences, BS'}];
         if (table === 'program_requirement_course_options') data = [{course_code: cs200.code}];
         if (table === 'course_designations' && (published || genEd)) data = catalog.map(({id, breadth}) => ({
           course_id: id,

@@ -2,7 +2,7 @@
 import {randomUUID} from 'node:crypto';
 import {GENERAL_ED_CODES, generalEducationTags, matchingRawBreadthCodes, type CourseDesignationRow} from './breadth';
 import {parseDigInputs, toGenerateRequest, type CatalogRows, type GenerateRequest} from './dig-request';
-import {evaluateRequisites, requisiteEvidence, type PriorAttempt} from './dig-prerequisites';
+import {evaluateRequisites, requisiteEvidence, type PriorAttempt, type RecognizedTransfer} from './dig-prerequisites';
 import {supabaseServer} from './supabase-server';
 
 type Db = Awaited<ReturnType<typeof supabaseServer>>;
@@ -14,19 +14,32 @@ function batches<T>(items: T[], size: number): T[][] {
   return Array.from({length: Math.ceil(items.length / size)}, (_, index) => items.slice(index * size, (index + 1) * size));
 }
 
+async function termCourseRows(db: Db, term: string, courses: CatalogRows['courses']): Promise<CatalogRows['courses']> {
+  const snapshots = new Map<string, {credit_options: number[]; breadth: string[] | null; repeatable: boolean}>();
+  for (const batch of batches(courses.map(course => course.id), BATCH)) {
+    const {data, error} = await db.from('course_offerings').select('course_id, credit_options, breadth, repeatable').eq('term', term).in('course_id', batch);
+    if (error) throw error;
+    for (const row of data) snapshots.set(row.course_id, row);
+  }
+  return courses.map(course => {
+    const snapshot = snapshots.get(course.id);
+    return snapshot ? {...course, ...snapshot, breadth: course.breadth?.some(tag => tag.startsWith('COMM_') || tag.startsWith('QR_') || tag === 'ETHNIC') ? course.breadth : snapshot.breadth} : course;
+  });
+}
+
 /** Planned courses and explicit major flags. RLS limits this to the signed-in student. */
 async function plannedCourseFlags(db: Db, term: string): Promise<{course_id: string; counts_toward_major: boolean}[]> {
-  const {data, error} = await db.from('user_course_records').select('course_id, counts_toward_major').eq('term', term).eq('status', 'planned');
+  const {data, error} = await db.from('planner_courses').select('course_id, counts_toward_major').eq('term', term);
   if (error) throw error;
   return data as {course_id: string; counts_toward_major: boolean}[];
 }
 
-async function majorCourseCodes(db: Db, programId: string | null): Promise<Set<string>> {
+async function majorCourseCodes(db: Db, programIds: string[]): Promise<Set<string>> {
   const codes = new Set<string>();
-  if (!programId) return codes;
+  if (!programIds.length) return codes;
   for (let start = 0; ; start += 1000) {
     const {data, error} = await db.from('program_requirement_course_options')
-      .select('course_code').eq('program_id', programId).order('course_code').range(start, start + 999);
+      .select('course_code').in('program_id', programIds).order('course_code').range(start, start + 999);
     if (error) throw error;
     for (const row of data as {course_code: string | null}[]) if (row.course_code) codes.add(row.course_code.trim().replace(/\s+/g, ' ').toUpperCase());
     if (data.length < 1000) return codes;
@@ -58,7 +71,7 @@ async function loadCourseHistory(db: Db, term: string): Promise<PriorAttempt[]> 
   const history: PriorAttempt[] = [];
   const pageSize = 1000;
   for (let start = 0; ; start += pageSize) {
-    const {data, error} = await db.from('user_course_records')
+    const {data, error} = await db.from('course_attempts')
       .select('course_id, term, status, courses(code), grade_entries(letter_grade), terms(is_current)')
       .lte('term', term).in('status', ['completed', 'enrolled_self_reported'])
       .order('id').range(start, start + pageSize - 1).overrideTypes<PriorAttempt[], {merge: false}>();
@@ -140,26 +153,34 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   if (plannedIds.length === 0) return {error: 'Add a must-take course for this term first.'};
   if (inputs.required.some((id) => !plannedSet.has(id))) return {error: 'Your must-take courses changed. Go back to your conditions and dig again.'};
   const required = new Set(inputs.required);
-  const [catalog, history, profile] = await Promise.all([
+  const [catalog, history, profiles, transferResult] = await Promise.all([
     db.from('courses').select(COURSE_COLUMNS).in('id', plannedIds).order('code'),
     loadCourseHistory(db, term),
-    db.from('academic_profiles').select('program_id, academic_programs(label)').maybeSingle()
-      .overrideTypes<{program_id: string | null; academic_programs: {label: string} | null}, {merge: false}>(),
+    db.from('student_programs').select('program_id, kind, is_primary, name'),
+    db.from('transfer_credits').select('equivalent_course_id, awarded_term, courses(code)').lte('awarded_term', term),
   ]);
   if (catalog.error) throw catalog.error;
-  if (profile.error) throw profile.error;
-  const planned: CatalogRows['courses'] = catalog.data;
-  const historyIds = [...new Set(history.map(record => record.course_id))];
+  if (profiles.error) throw profiles.error;
+  if (transferResult.error) throw transferResult.error;
+  const transfers = (transferResult.data ?? []) as unknown as RecognizedTransfer[];
+  const planned = await termCourseRows(db, term, catalog.data);
+  const historyIds = [...new Set([...history.map(record => record.course_id), ...transfers.flatMap(row => row.equivalent_course_id ? [row.equivalent_course_id] : [])])];
   const requisiteRows = await loadRequisites(db, term, [...new Set([...plannedIds, ...historyIds])]);
   const aliases = new Map([...requisiteRows].map(([id, row]) => [id, row.course_aliases ?? []]));
+  for (const batch of batches([...new Set([...plannedIds, ...historyIds])], BATCH)) {
+    const {data, error} = await db.from('course_aliases').select('course_id, code').in('course_id', batch);
+    if (error) throw error;
+    for (const row of data) aliases.set(row.course_id, [...new Set([...(aliases.get(row.course_id) ?? []), row.code])]);
+  }
   // Use the publication for each actual attempt as well, since the subject listing can change by term.
   for (const priorTerm of new Set(history.map(record => record.term).filter(attemptTerm => attemptTerm !== term))) {
     const priorRows = await loadRequisites(db, priorTerm, history.filter(record => record.term === priorTerm).map(record => record.course_id));
     for (const [id, row] of priorRows) aliases.set(id, [...new Set([...(aliases.get(id) ?? []), ...(row.course_aliases ?? [])])]);
   }
-  const program = profile.data?.academic_programs?.label ?? '';
+  const programs = (profiles.data ?? []) as {program_id: string | null; kind: string; is_primary: boolean; name: string}[];
+  const program = programs.find(item => item.is_primary)?.name ?? '';
   const undergraduate = /(?:,\s*|\s)(?:BA|BS[A-Z]*|BBA|BFA|BM|BNS|BLA|Bachelor)(?=\b)/i.test(program);
-  const evidence = requisiteEvidence(history, term, aliases, planned.filter(course => required.has(course.id)), undergraduate);
+  const evidence = requisiteEvidence(history, term, aliases, planned.filter(course => required.has(course.id)), undergraduate, transfers);
   function assess(candidates: CatalogRows['courses'], rows: ReadonlyMap<string, RequisiteRow>) {
     const accepted: CatalogRows['courses'] = [];
     const blocked: string[] = [];
@@ -213,7 +234,7 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
     const unique = [...new Map([...extras.flat(), ...preferredRows].filter((course) => !plannedSet.has(course.id)).map((course) => [course.id, course])).values()];
     const extraRequisites = await loadRequisites(db, term, unique.map(course => course.id));
     for (const [id, row] of extraRequisites) aliases.set(id, row.course_aliases ?? []);
-    const {accepted: eligible} = assess(unique, extraRequisites);
+    const {accepted: eligible} = assess(await termCourseRows(db, term, unique), extraRequisites);
     courses.push(...(breadthCanHelp ? eligible : eligible.slice(0, Math.max(0, 20 - (courses.length - inputs.required.length)))));
   }
   const ids = courses.map(({id}) => id);
@@ -232,7 +253,7 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
     }
   }
   if ((inputs.maxMajorCourses !== undefined && inputs.maxMajorCourses !== null) || inputs.balanceMajorCourses) {
-    const majorCodes = await majorCourseCodes(db, profile.data?.program_id ?? null);
+    const majorCodes = await majorCourseCodes(db, programs.flatMap(item => item.kind === 'major' && item.program_id ? [item.program_id] : []));
     if (!majorCodes.size && !explicitMajor.size) {
       if (inputs.maxMajorCourses !== undefined && inputs.maxMajorCourses !== null) return {error: 'Set your academic program or mark planned courses for your major before using the major-course limit.'};
       inputs.balanceMajorCourses = false;
@@ -277,8 +298,10 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
     meetings,
     stats: stats.flat() as CatalogRows['stats'],
     edges: await walkingEdges(db, meetings),
-    completedCourseIds: history.filter(record => record.status === 'completed' && record.grade_entries?.letter_grade !== 'F')
-      .map(record => record.course_id),
+    completedCourseIds: [...new Set([
+      ...history.filter(record => record.status === 'completed' && record.grade_entries?.letter_grade !== 'F').map(record => record.course_id),
+      ...transfers.flatMap(row => row.equivalent_course_id && row.awarded_term <= term ? [row.equivalent_course_id] : []),
+    ])],
   };
   // A random id per request: nothing that identifies the user leaves this server.
   return toGenerateRequest(inputs, rows, randomUUID());

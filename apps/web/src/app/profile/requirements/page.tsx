@@ -11,6 +11,7 @@ import {digTerm} from '@/lib/data/dig-session';
 import {useRequirements, type RequirementGroup} from '@/lib/data/requirements';
 import {readDars, type DarsCourse} from '@/lib/dars';
 import {s} from '@/lib/ui/css';
+import {matchesCourseCode} from '@/lib/course-identity';
 
 const CSS = `
 button{font:inherit}
@@ -135,7 +136,10 @@ function Requirements() {
         // Only courses the catalog knows and the history lacks are worth asking about.
         const known = await findCoursesByCodes(reading.courses.map((course) => course.code));
         const have = new Set(records.filter((record) => record.status === 'completed' || record.status === 'enrolled_self_reported').map((record) => record.course_id));
-        setDiffs(known.filter((course) => !have.has(course.id)).map((course) => ({course, taken: reading.courses.find((item) => item.code === course.code)!})));
+        setDiffs(known.filter((course) => !have.has(course.id)).flatMap((course) => {
+          const taken = reading.courses.find((item) => matchesCourseCode(course, item.code));
+          return taken ? [{course, taken}] : [];
+        }));
         next = 'review';
       }
     } catch (failure) {
@@ -188,6 +192,8 @@ function Requirements() {
               </button>
               {isOpen && (
                 <div className="rise" style={s('padding: 0 16px 16px; display: flex; flex-direction: column; gap: 12px')}>
+                  {group.review && <p style={s('margin: 0; font-size: 13px; color: #5F5A55')}>Course matches are shown below. Credit choices, overlap, residency, and other conditions still need review against your report.</p>}
+                  {group.source_url?.startsWith('https://guide.wisc.edu/') && <a href={group.source_url} target="_blank" rel="noreferrer">View published requirements</a>}
                   <div style={s('display: flex; flex-wrap: wrap; gap: 6px')}>
                     {group.items.map((item) => <span key={item.label} style={s(CHIP + (item.state === 'd' ? 'background: #1D1B1A; color: #FFFFFF' : item.state === 'p' ? 'border: 2px dashed #1D1B1A; color: #1D1B1A' : 'border: 2px solid #C9C3BC; color: #3D3936'))}>{(item.state === 'd' ? '✓ ' : '') + item.label}</span>)}
                   </div>

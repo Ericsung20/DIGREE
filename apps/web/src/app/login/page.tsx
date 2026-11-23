@@ -7,6 +7,7 @@ import {saveSampleAccount} from '@/lib/data/account';
 import {resetRemote} from '@/lib/data/local-store';
 import {IS_MOCK, supabase} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
+import {isExistingSignup, normalizeEmail} from '@/lib/auth-signup';
 
 const CSS = `
 button,input{font:inherit}
@@ -43,7 +44,7 @@ export default function LoginPage() {
   async function submit() {
     if (busy) return;
     setMessage(null);
-    const address = email.trim();
+    const address = normalizeEmail(email);
     if (IS_MOCK) {
       if (!login) saveSampleAccount({name: name.trim() || null, email: address || null});
       return router.replace(login ? '/' : '/onboarding');
@@ -55,7 +56,8 @@ export default function LoginPage() {
       const {data, error} = login
         ? await supabase().auth.signInWithPassword({email: address, password})
         : await supabase().auth.signUp({email: address, password, options: {data: {name: name.trim()}}});
-      if (error) fail(error.message);
+      if (error) fail(error.code === 'user_already_exists' ? 'An account already exists for this email. Log in or reset your password.' : error.message);
+      else if (!login && isExistingSignup(data.user)) fail('An account already exists for this email. Log in or reset your password.');
       else if (data.session) {
         resetRemote(); // nothing cached from a previous account
         router.replace(login ? '/' : '/onboarding');

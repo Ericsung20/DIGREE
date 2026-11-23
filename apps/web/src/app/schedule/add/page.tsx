@@ -7,6 +7,7 @@ import {bundleKey, currentTermOf, getBundles, searchCourses, useBuildingNames, u
 import {addCourseRecord, changeCourseSection, removeCourseRecord, useCourseRecords, type CourseRecordStatus} from '@/lib/data/course-records';
 import {s} from '@/lib/ui/css';
 import {DAY_LETTERS, WEEKDAYS, meetingSummary, shortCode} from '@/lib/ui/format';
+import {displayCourseCode, matchesCourseCode} from '@/lib/course-identity';
 
 const CSS = `
 button,input{font:inherit}
@@ -83,7 +84,7 @@ function AddCourse() {
       const found = await searchCourses(value);
       if (ticket !== latest.current) return;
       setHits(found);
-      const exact = found.find((hit) => [hit.code, shortCode(hit.code)].some((code) => code.toLowerCase() === value.trim().toLowerCase()));
+      const exact = found.find((hit) => matchesCourseCode(hit, value));
       if (exact) setChosen(exact);
     } catch {
       if (ticket === latest.current) setError('Couldn’t search courses. Check your connection and try again.');
@@ -151,7 +152,7 @@ function AddCourse() {
                 setQ(hit.code);
                 setChosen(hit);
               }} style={s('height: 38px; padding: 0 14px; box-sizing: border-box; border-radius: 19px; border: 2px dashed #C9C3BC; background: transparent; color: #3D3936; font-size: 14px; font-weight: 800; display: inline-flex; align-items: center; gap: 6px; cursor: pointer')}>
-                <Svg size={14} sw={3} join={false}>{ICON.plus}</Svg>{hit.code}
+                <Svg size={14} sw={3} join={false}>{ICON.plus}</Svg>{displayCourseCode(hit)}
               </button>
             ))}
           </div>
@@ -160,7 +161,7 @@ function AddCourse() {
 
         {course && (
           <div className="rise" style={s('display: flex; align-items: center; justify-content: space-between; padding: 0 4px; animation-delay: 60ms')}>
-            <div style={s('display: flex; flex-direction: column')}><span style={s('font-size: 18px; font-weight: 900')}>{course.code}</span><span style={s('font-size: 14px; font-weight: 600; color: #5F5A55')}>{course.title ?? ''}</span></div>
+            <div style={s('display: flex; flex-direction: column')}><span style={s('font-size: 18px; font-weight: 900')}>{displayCourseCode(course)}</span><span style={s('font-size: 14px; font-weight: 600; color: #5F5A55')}>{course.title ?? ''}</span></div>
             <span style={s('flex-shrink: 0; height: 30px; padding: 0 12px; border-radius: 15px; background: #ECE8E3; font-size: 14px; font-weight: 900; display: flex; align-items: center')}>{course.credit_options[0]} cr</span>
           </div>
         )}

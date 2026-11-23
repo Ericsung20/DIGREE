@@ -173,7 +173,7 @@ select lives_ok(
 select is_empty($$select id from community_posts where id = '40000000-0000-0000-0000-000000000001'$$, 'Blocked authors are hidden from the feed');
 delete from user_blocks where blocked_id = '10000000-0000-0000-0000-000000000001';
 
--- Exercise all visibility levels for owner, accepted friend and nonfriend.
+-- Historical permission values do not override accepted-friend sharing.
 reset role;
 create function pg_temp.schedule_access(
     permission public.visibility, viewer uuid, expected_raw bigint, expected_busy bigint, label text
@@ -193,12 +193,12 @@ set local role authenticated;
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000001';
 insert into schedule_permissions (owner_id, viewer_id) values ('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002'), ('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003');
 select * from pg_temp.schedule_access('private', '10000000-0000-0000-0000-000000000001', 1, 2, 'owner');
-select * from pg_temp.schedule_access('private', '10000000-0000-0000-0000-000000000002', 0, 0, 'friend');
+select * from pg_temp.schedule_access('private', '10000000-0000-0000-0000-000000000002', 1, 2, 'accepted friend ignores legacy permission');
 select * from pg_temp.schedule_access('private', '10000000-0000-0000-0000-000000000003', 0, 0, 'nonfriend');
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000001';
 update schedule_permissions set visibility = 'free_busy';
 select * from pg_temp.schedule_access('free_busy', '10000000-0000-0000-0000-000000000001', 1, 2, 'owner');
-select * from pg_temp.schedule_access('free_busy', '10000000-0000-0000-0000-000000000002', 0, 2, 'friend');
+select * from pg_temp.schedule_access('free_busy', '10000000-0000-0000-0000-000000000002', 1, 2, 'accepted friend ignores legacy permission');
 select * from pg_temp.schedule_access('free_busy', '10000000-0000-0000-0000-000000000003', 0, 0, 'nonfriend');
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000001';
 update schedule_permissions set visibility = 'full';
@@ -209,7 +209,7 @@ select is(schedule_visibility('10000000-0000-0000-0000-000000000001', '10000000-
 
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000001';
 delete from schedule_permissions where viewer_id = '10000000-0000-0000-0000-000000000002';
-select * from pg_temp.schedule_access('private', '10000000-0000-0000-0000-000000000002', 0, 0, 'friend after permission revocation');
+select * from pg_temp.schedule_access('private', '10000000-0000-0000-0000-000000000002', 1, 2, 'accepted friend unaffected by legacy permission removal');
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000001';
 insert into schedule_permissions values ('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002', 'full');
 delete from friendships where requester_id = '10000000-0000-0000-0000-000000000001' and receiver_id = '10000000-0000-0000-0000-000000000002';
