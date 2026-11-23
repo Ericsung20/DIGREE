@@ -45,3 +45,15 @@ Verified shared dataset after rollout: 3 accounts, 53 course records, 31 grade r
 - Browser signup/onboarding, transfer equivalent selection/save and persistence after reload on the isolated local stack.
 
 Shared-cloud verification used read-only schema/count queries rather than creating disposable users in the shared dataset. The local regression stack remains available for destructive/failure/concurrency tests; everyday shared development needs no Docker.
+
+## Requirement completeness follow-up
+
+The old `main` web process on port 3000 still displayed its hard-coded Programming core. It was replaced with the `db_fix` web process. The importer also now retains prose conditions, full criterion labels and secondary table cells. The screen displays every imported row independently of automatic matching, preserves course evidence badges, and reports loading/missing/error states explicitly.
+
+Re-extracted the existing cached Guide HTML (no new university fetch): 763 major versions covering 197 distinct major labels and 505 minor/certificate versions, with zero extraction issues. After all 77 catalog batches, 1,268 program versions have 12,728 nonempty requirement groups; none lacks requirements and every derived group exactly equals its source JSON. Adjacent tables and prose with the same heading are now combined into one section, so group counts are not comparable to the first rollout. CS BS 2026 has 17 sections and Data Science BS has 14. Existing account/course-record/grade/message counts remained 3/53/31/17.
+
+The shared catalog contains 791 courses with multiple aliases, including `CS/E C E 252` and `A A E/ENVIR ST 244`; cross-list identity is applied generically. This coverage describes imported data rather than every possible university course.
+
+Follow-up validation: 61 web tests including both live optimizer cases, five Python extraction tests including long Unicode criteria, typecheck, ESLint, production build, and authenticated browser checks of both selected majors and CS GPA/residency prose. Docker Desktop was stopped; the web and optimizer use native processes with hosted Supabase.
+
+To apply newly extracted requirement batches, `scripts/apply-requirements.ps1 -ProjectRef <ref>` previews only. Applying requires `-Apply` and the shared project additionally requires `-AllowSharedData`. It rejects extraction issues, limits inputs to the ignored staging directory, reads UTF-8 explicitly on Windows, and applies each batch transactionally with lock and statement timeouts.

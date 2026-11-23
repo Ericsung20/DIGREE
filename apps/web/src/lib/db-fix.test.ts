@@ -85,3 +85,22 @@ test('cross-listed names cannot count as separate courses across requirement gro
   expect([...requirementOverlapIds([first, second], evidence)].sort()).toEqual(['other', 'req']);
   expect(countedTransferCredits([transfer], new Set(['cross240']), new Set(['cross240']))).toHaveLength(1);
 });
+
+test('requirement display retains every condition alongside course options for any major', () => {
+  const rows = [
+    {kind: 'condition', label: 'At least 30 credits in residence.'},
+    {kind: 'criterion', label: 'Quality of Work', description: 'A minimum GPA of 2.0 is required.'},
+    {kind: 'criterion', label: 'Complete one:', credits: '3'},
+    {kind: 'course', courses: [{code: 'COMP SCI 240', published_code: 'COMP SCI/MATH 240'}], description: 'Discrete Mathematics', credits: '3'},
+    {kind: 'condition', label: 'Advisor approval is required for substitutions.'},
+  ];
+  for (const name of ['Computer Sciences', 'Economics', 'Nursing']) {
+    const result = estimateRequirement(group(rows, `${name} requirements`), evidence);
+    expect(result.rules).toHaveLength(rows.length);
+    expect(result.rules?.[0].label).toContain('30 credits');
+    expect(result.rules?.[1].description).toContain('GPA of 2.0');
+    expect(result.rules?.[3].courses).toEqual(['COMP SCI/MATH 240']);
+    expect(result.rules?.[4].label).toContain('Advisor approval');
+    expect(result.review).toBe(true);
+  }
+});

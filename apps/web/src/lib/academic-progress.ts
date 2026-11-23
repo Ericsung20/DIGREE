@@ -3,8 +3,10 @@ import type {CatalogRequirement} from './data/academic-catalog';
 
 export type CreditEvidence = {course_id: string; codes: string[]; credits: number; state: 'd' | 'p'; transfer?: boolean};
 export type EstimatedGroup = {
+  id?: string;
   name: string; count: string; progress: number; done: boolean; dig: boolean; review?: boolean; source_url?: string;
   items: {label: string; state: 'd' | 'p' | 'n'; courseCode?: string}[];
+  rules?: {id: string; kind: string; label: string; description: string; credits: string | null; conditions: string[]; courses: string[]}[];
 };
 
 export function requirementOverlapIds(groups: CatalogRequirement[], evidence: CreditEvidence[]): Set<string> {
@@ -41,7 +43,7 @@ export function estimateRequirement(group: CatalogRequirement, evidence: CreditE
   const choose = command ? numbers[command] ?? Number(command) : null;
   const plainCredits = (value: string | null | undefined) => value == null || /^\s*\d+(?:\.\d+)?(?:\s+credits?)?\s*$/i.test(value);
   const supportedRows = rows.every(row => {
-    if (row.references?.length || (row.credit_conditions ?? []).some(value => !plainCredits(value)) || !plainCredits(row.credits)) return false;
+    if (row.description || row.references?.length || (row.credit_conditions ?? []).some(value => !plainCredits(value)) || !plainCredits(row.credits)) return false;
     if (row.kind === 'course' || row.kind === 'alternative') return row.courses?.length === 1 && !row.label;
     return row.kind === 'criterion' && (/^complete (one|two|three|four|five|six|\d+)\s*:?\s*$/i.test(row.label ?? '') || /^total credits$/i.test(row.label ?? ''));
   });
@@ -75,10 +77,18 @@ export function estimateRequirement(group: CatalogRequirement, evidence: CreditE
   const complex = !supportedRows || creditReview || overlapReview || /residen|honors|footnote|quality of work/i.test(group.heading)
     || rows.some(row => !!row.references?.length) || commands.length > 1 || required === null || !Number.isFinite(required) || required < 1;
   return {
+    id: group.id,
     name: group.heading, count: complex ? 'Needs review' : `${Math.min(completed, required!)} of ${required}${current ? ` · ${current} now` : ''}`,
     progress: required ? Math.min(1, (completed + current * .5) / required) : 0,
     done: !complex && completed >= required!, review: complex, source_url: group.source_url ?? undefined,
     items: items.length ? items : rows.flatMap(row => row.label ? [{label: `${row.label}${row.credit_conditions?.length ? ` · ${row.credit_conditions.join('; ')}` : ''}`, state: 'n' as const}] : []),
     dig: !complex && completed < required! && items.some(item => item.state === 'n'),
+    // Display every published row, independently of what the estimator supports.
+    rules: rows.map((row, index) => ({
+      id: `${group.id}:${index}`, kind: row.kind ?? 'condition',
+      label: row.label ?? (row.kind === 'alternative' ? 'Or' : ''), description: row.description ?? '',
+      credits: row.credits ?? null, conditions: row.credit_conditions ?? [],
+      courses: row.courses?.map(course => course.published_code ?? course.code) ?? [],
+    })),
   };
 }

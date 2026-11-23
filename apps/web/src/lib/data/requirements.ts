@@ -12,8 +12,10 @@ export type RequirementGroup = EstimatedGroup;
 export function useRequirements() {
   const profile = useProfile();
   const {programs} = useAcademicOptions();
-  const selections = useStudentPrograms();
-  const catalog = useCatalogRequirements(selections);
+  const selectionState = useStudentPrograms();
+  const selections = selectionState.data;
+  const catalogState = useCatalogRequirements(selections);
+  const catalog = catalogState.data;
   const records = useCourseRecords();
   const grades = useGrades();
   const currentTerm = currentTermOf(useTerms());
@@ -56,6 +58,9 @@ export function useRequirements() {
     items: [{label: item.credits_remaining === 0 ? 'Complete in your report' : `${item.credits_remaining} credits left in your report`, state: item.credits_remaining === 0 ? 'd' : 'n'}],
   });
   return {
+    loading: selectionState.loading || catalogState.loading,
+    error: selectionState.error ?? catalogState.error,
+    publishedGroupCount: catalog.length,
     program, groups, percent: minimum ? Math.round(Math.min(1, earned / minimum) * 100) : 0,
     remaining: groups.filter(group => !group.done).length,
     totals: {now: current.length, nowCredits: inProgress, taken: completed.length, takenCredits: completed.reduce((sum, row) => sum + row.credits, 0)},

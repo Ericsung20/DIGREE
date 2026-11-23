@@ -60,11 +60,35 @@ class ProgramRequirementsTest(unittest.TestCase):
         """
         title, requirements = catalog.extract_requirements(html, include_conditions=True)
         self.assertEqual(title, "Teaching, Minor")
-        self.assertEqual([group["rows"][0]["label"] for group in requirements],
+        self.assertEqual([row["label"] for group in requirements for row in group["rows"]],
                          ["Minimum GPA of 2.75.", "At least 6 credits in residence."])
-        self.assertEqual(requirements[1]["rows"][0]["credit_conditions"], ["6 credits"])
+        self.assertEqual(requirements[0]["rows"][1]["credit_conditions"], ["6 credits"])
         _, declaration = catalog.extract_requirements(html, include_conditions=True, section_id="howtogetintextcontainer")
         self.assertEqual(declaration[0]["rows"][0]["label"], "Elementary Education students only.")
+
+    def test_major_preserves_prose_criteria_details_and_footnotes_together(self):
+        html = """
+        <title>Example, BS &lt; University of Wisconsin-Madison</title>
+        <div id="requirementstextcontainer"><h2>Requirements</h2>
+          <p>A minimum GPA of 2.0 is required.</p>
+          <table><tr><td>Residency</td><td>Complete 30 credits at UW–Madison.</td></tr></table>
+          <ul><li>Permission is required for substitutions.</li></ul>
+        </div>
+        """
+        _, groups = catalog.extract_requirements(html, include_conditions=True)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]["rows"]), 3)
+        self.assertIn("GPA of 2.0", groups[0]["rows"][0]["label"])
+        self.assertIn("30 credits", groups[0]["rows"][1]["description"])
+        self.assertIn("Permission", groups[0]["rows"][2]["label"])
+
+    def test_long_criteria_and_unicode_are_not_truncated(self):
+        rule = "Complete the required courses and obtain advisor approval. " * 4 + "UW–Madison residency applies."
+        rows = catalog.table_rows(next(node for node in catalog.Document(
+            f"<table><tr><td>{rule}</td><td>Minimum GPA 2.75.</td></tr></table>"
+        ).root.walk() if node.tag == "table"))
+        self.assertEqual(rows[0]["label"], rule)
+        self.assertEqual(rows[0]["description"], "Minimum GPA 2.75.")
 
 
 if __name__ == "__main__":

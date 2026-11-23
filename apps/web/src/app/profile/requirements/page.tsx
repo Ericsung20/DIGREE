@@ -11,7 +11,7 @@ import {digTerm} from '@/lib/data/dig-session';
 import {useRequirements, type RequirementGroup} from '@/lib/data/requirements';
 import {readDars, type DarsCourse} from '@/lib/dars';
 import {s} from '@/lib/ui/css';
-import {matchesCourseCode} from '@/lib/course-identity';
+import {expandCourseCode, matchesCourseCode} from '@/lib/course-identity';
 
 const CSS = `
 button{font:inherit}
@@ -81,7 +81,7 @@ function DarsChecklist({programId}: {programId: string}) {
 function Requirements() {
   const router = useRouter();
   const params = useSearchParams();
-  const {program, groups} = useRequirements();
+  const {program, groups, loading, error: catalogError, publishedGroupCount} = useRequirements();
   const terms = useTerms();
   const records = useCourseRecords();
   const [opened, setOpened] = useState<number | null | undefined>(undefined);
@@ -179,10 +179,13 @@ function Requirements() {
       </header>
 
       <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 12px 20px 24px; display: flex; flex-direction: column; gap: 8px')}>
+        {A && loading && <EmptyNote role="status">Loading published requirements…</EmptyNote>}
+        {A && catalogError && <EmptyNote role="alert">{catalogError}</EmptyNote>}
+        {A && !loading && !catalogError && <p style={s('margin: 0 4px 6px; font-size: 13px; color: #5F5A55')}>{publishedGroupCount ? `${publishedGroupCount} published requirement sections across your selected programs` : 'Select your program in your profile to see its published requirements.'}</p>}
         {A && groups.map((group, i) => {
           const isOpen = open === i;
           return (
-            <section key={group.name} className="rise" style={s(`flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; transition: box-shadow 260ms ease; animation-delay: ${i * 50}ms; box-shadow: ${isOpen ? '0 10px 28px rgba(40,20,20,0.08)' : '0 1px 3px rgba(40,20,20,0.06)'}`)}>
+            <section key={group.id ?? group.name} className="rise" style={s(`flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; transition: box-shadow 260ms ease; animation-delay: ${Math.min(i * 35, 350)}ms; box-shadow: ${isOpen ? '0 10px 28px rgba(40,20,20,0.08)' : '0 1px 3px rgba(40,20,20,0.06)'}`)}>
               <button type="button" aria-expanded={isOpen} onClick={() => setOpened(isOpen ? null : i)} style={s('width: 100%; min-height: 64px; padding: 10px 14px 10px 16px; border: none; background: transparent; color: #1D1B1A; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left')}>
                 <span style={s('flex: 1; display: flex; flex-direction: column; gap: 6px')}>
                   <span style={s('display: flex; align-items: center; justify-content: space-between; gap: 8px')}><span style={s('font-size: 15px; font-weight: 900')}>{group.name}</span><span style={s(`flex-shrink: 0; font-size: 13px; font-weight: 900; color: ${group.done ? '#355A1F' : '#5F5A55'}`)}>{group.done ? 'Done' : group.count}</span></span>
@@ -194,9 +197,24 @@ function Requirements() {
                 <div className="rise" style={s('padding: 0 16px 16px; display: flex; flex-direction: column; gap: 12px')}>
                   {group.review && <p style={s('margin: 0; font-size: 13px; color: #5F5A55')}>Course matches are shown below. Credit choices, overlap, residency, and other conditions still need review against your report.</p>}
                   {group.source_url?.startsWith('https://guide.wisc.edu/') && <a href={group.source_url} target="_blank" rel="noreferrer">View published requirements</a>}
-                  <div style={s('display: flex; flex-wrap: wrap; gap: 6px')}>
+                  {group.rules?.length ? <ul aria-label="Published requirement conditions" style={s('list-style: none; margin: 0; padding: 0; display: grid; gap: 12px')}>
+                    {group.rules.map(rule => <li key={rule.id} style={s('display: grid; gap: 5px; padding: 10px 0; border-bottom: 1px solid #F1EEEA; line-height: 1.5; overflow-wrap: anywhere')}>
+                      {rule.label && <strong>{rule.label}</strong>}
+                      {rule.courses.length > 0 && <div style={s('display: flex; flex-wrap: wrap; gap: 6px')}>
+                        {rule.courses.map(code => {
+                          const aliases = new Set(expandCourseCode(code));
+                          const item = group.items.find(item => item.courseCode && expandCourseCode(item.courseCode).some(alias => aliases.has(alias)));
+                          const state = item?.state ?? 'n';
+                          return <span key={code} style={s(CHIP + (state === 'd' ? 'background: #1D1B1A; color: #FFFFFF' : state === 'p' ? 'border: 2px dashed #1D1B1A; color: #1D1B1A' : 'border: 2px solid #C9C3BC; color: #3D3936'))}>{(state === 'd' ? '✓ ' : '') + code}</span>;
+                        })}
+                      </div>}
+                      {rule.description && <span>{rule.description}</span>}
+                      {rule.credits && <span style={s('font-size: 13px; font-weight: 800')}>{rule.credits} credits</span>}
+                      {rule.conditions.length > 0 && <span style={s('font-size: 13px; color: #5F5A55')}>{rule.conditions.join(' · ')}</span>}
+                    </li>)}
+                  </ul> : <div style={s('display: flex; flex-wrap: wrap; gap: 6px')}>
                     {group.items.map((item) => <span key={item.label} style={s(CHIP + (item.state === 'd' ? 'background: #1D1B1A; color: #FFFFFF' : item.state === 'p' ? 'border: 2px dashed #1D1B1A; color: #1D1B1A' : 'border: 2px solid #C9C3BC; color: #3D3936'))}>{(item.state === 'd' ? '✓ ' : '') + item.label}</span>)}
-                  </div>
+                  </div>}
                   {group.dig && (
                     <button type="button" onClick={() => void digWith(group)} className="press" style={s('border: none; cursor: pointer; align-self: flex-start; height: 42px; padding: 0 16px; border-radius: 21px; background: #8C1D2B; color: #FFFFFF; text-decoration: none; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 900')}><Spade fill="#FFFFFF" outline={false} style="height: 18px; width: 7px" />Dig a schedule with these</button>
                   )}

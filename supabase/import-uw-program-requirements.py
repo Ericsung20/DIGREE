@@ -152,12 +152,14 @@ def table_rows(table):
         first = cells[0].text()
         if course_list and ids:
             alternative = "orclass" in cells[0].classes() or first.lower().startswith("or ")
-            # Preserve the selection and credit columns without copying linked course descriptions.
+            details = " ".join(cell.text() for cell in cells if cell not in code_cells and "hourscol" not in cell.classes())
             rows.append({"kind": "alternative" if alternative else "course", "courses": ids,
-                         "credits": credits or None, "references": [ref for ref in refs if ref not in ids]})
+                         "credits": credits or None, "description": details,
+                         "references": [ref for ref in refs if ref not in ids]})
         elif any(cell.tag == "td" for cell in cells):
             body = " ".join(cell.text() for cell in cells)
-            rows.append({"kind": "criterion", "label": first[:180], "credits": credits or None,
+            details = " ".join(cell.text() for cell in cells[1:] if "hourscol" not in cell.classes())
+            rows.append({"kind": "criterion", "label": first, "description": details, "credits": credits or None,
                          "credit_conditions": credit_conditions(body), "courses": refs})
     return rows
 
@@ -222,6 +224,15 @@ def extract_requirements(html, *, include_conditions=False, section_id="requirem
                 visit(child)
 
     visit(content)
+    if include_conditions:
+        # Tables and prose under the same section remain one readable section.
+        merged = []
+        for group in groups:
+            if merged and merged[-1]["heading"] == group["heading"]:
+                merged[-1]["rows"].extend(group["rows"])
+            else:
+                merged.append(group)
+        groups = merged
     return title, groups
 
 
@@ -235,7 +246,7 @@ def stage_requirements(directory):
         if not item.exists():
             issues.append({**program, "issue": "page unavailable"})
             continue
-        title, groups = extract_requirements(item.read_text(encoding="utf-8"))
+        title, groups = extract_requirements(item.read_text(encoding="utf-8"), include_conditions=True)
         if label_key(title) != label_key(program["label"]) or not groups:
             issues.append({**program, "issue": "title mismatch or empty requirements", "actual": title})
             continue
