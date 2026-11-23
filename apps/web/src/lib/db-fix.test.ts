@@ -1,5 +1,5 @@
 import {expect, test} from 'vitest';
-import {degreeCreditMinimum, estimateRequirement, requirementOverlapIds} from './academic-progress';
+import {degreeCreditMinimum, estimateRequirement, requirementOverlapIds, requirementTitle} from './academic-progress';
 import {isExistingSignup, normalizeEmail} from './auth-signup';
 import {displayCourseCode, expandCourseCode, matchesCourseCode, normalizeCourseCode} from './course-identity';
 import {countedTransferCredits, validateTransfer, type TransferCredit} from './data/transfer-credits';
@@ -32,6 +32,31 @@ test('transfer validation and credit counting prevent duplicate source/equivalen
   expect(validateTransfer({...transfer, source_course: 'X 999'}, [transfer])).toMatch(/already/);
   expect(countedTransferCredits([transfer], new Set(['cross240']))).toEqual([]);
   expect(countedTransferCredits([{...transfer, equivalent_course_id: null}], new Set(['cross240']))).toHaveLength(1);
+});
+
+test('course-only transfer awards feed degree and requisite evidence without source metadata', () => {
+  const award: TransferCredit = {...transfer, institution: null, source_course: null};
+  expect(validateTransfer(award, [])).toBeNull();
+  expect(validateTransfer({...award, equivalent_course_id: null}, [])).toMatch(/Choose the UW course/);
+  expect(validateTransfer(award, [award])).toMatch(/already/);
+  expect(countedTransferCredits([award], new Set()).reduce((sum, row) => sum + row.credits, 0)).toBe(3);
+  const aliases = new Map([['cross240', ['COMP SCI 240', 'MATH 240']]]);
+  const prior = {...award, courses: {code: 'COMP SCI 240'}};
+  expect(evaluateRequisites('MATH 240', requisiteEvidence([], '1274', aliases, [], true, [prior]))).toBe('met');
+  const result = estimateRequirement(group([{kind: 'course', courses: [{code: 'MATH 240'}], credits: '3'}]),
+    [{course_id: award.equivalent_course_id!, codes: aliases.get('cross240')!, credits: award.credits, state: 'd', transfer: true}]);
+  expect(result.items[0].state).toBe('d');
+  expect(result.done).toBe(true);
+  const review = estimateRequirement(group([{kind: 'course', courses: [{code: 'MATH 240'}], credits: '3'}, {kind: 'condition', label: 'Residency applies.'}]),
+    [{course_id: award.equivalent_course_id!, codes: aliases.get('cross240')!, credits: award.credits, state: 'd', transfer: true}]);
+  expect(review.count).toBe('1 matched');
+  expect(review.done).toBe(false);
+});
+
+test('requirement titles omit repeated ancestry and footnote markers', () => {
+  expect(requirementTitle('Requirements for the Major / Additional Mathematics / Linear Algebra')).toBe('Linear Algebra');
+  expect(requirementTitle('Requirements for the Major / Advanced Computer Science Courses1 / Electives1')).toBe('Electives');
+  expect(requirementTitle('University Requirements / Core General Education (Core GenEd) Requirements')).toBe('General education');
 });
 
 test('recognized equivalents satisfy aliases without inventing grades, concurrency or future credit', () => {

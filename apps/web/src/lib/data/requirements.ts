@@ -1,4 +1,4 @@
-import {degreeCreditMinimum, estimateRequirement, requirementOverlapIds, type CreditEvidence, type EstimatedGroup} from '../academic-progress';
+import {degreeCreditMinimum, estimateRequirement, requirementOverlapIds, requirementTitle, type CreditEvidence, type EstimatedGroup} from '../academic-progress';
 import {useCatalogRequirements, useStudentPrograms} from './academic-catalog';
 import {currentTermOf, useCourseDetails, useTerms} from './catalog';
 import {useCourseRecords, useGrades} from './course-records';
@@ -42,7 +42,7 @@ export function useRequirements() {
     done: minimum !== null && earned >= minimum, review: minimum === null, dig: false,
     items: [
       ...completed.map(row => ({label: details[row.course_id]?.display_code ?? row.course_code ?? row.course_id, state: 'd' as const})),
-      ...credited.map(row => ({label: `${row.institution} · ${row.source_course} (${row.credits} transfer cr)`, state: 'd' as const})),
+      ...credited.map(row => ({label: `${row.equivalent_course_id ? details[row.equivalent_course_id]?.display_code ?? details[row.equivalent_course_id]?.code ?? 'UW equivalent' : row.source_course ?? 'Transfer credit'} (${row.credits} transfer cr)`, state: 'd' as const})),
       ...current.map(row => ({label: row.course_code ?? row.course_id, state: 'p' as const})),
     ],
   }];
@@ -50,7 +50,7 @@ export function useRequirements() {
   for (const group of catalog) {
     const estimate = estimateRequirement(group, evidence, overlapping.has(group.id));
     const owner = selections.find(row => row.program_version_id === group.program_version_id);
-    groups.push({...estimate, name: owner ? `${owner.name} · ${estimate.name}` : estimate.name});
+    groups.push({...estimate, name: requirementTitle(estimate.name), programName: owner?.name});
   }
   for (const item of dars) groups.push({
     name: item.requirement_id, count: `${item.credits_remaining} cr left in your report`, progress: item.credits_remaining === 0 ? 1 : 0,

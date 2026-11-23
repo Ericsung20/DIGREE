@@ -57,3 +57,9 @@ The shared catalog contains 791 courses with multiple aliases, including `CS/E C
 Follow-up validation: 61 web tests including both live optimizer cases, five Python extraction tests including long Unicode criteria, typecheck, ESLint, production build, and authenticated browser checks of both selected majors and CS GPA/residency prose. Docker Desktop was stopped; the web and optimizer use native processes with hosted Supabase.
 
 To apply newly extracted requirement batches, `scripts/apply-requirements.ps1 -ProjectRef <ref>` previews only. Applying requires `-Apply` and the shared project additionally requires `-AllowSharedData`. It rejects extraction issues, limits inputs to the ignored staging directory, reads UTF-8 explicitly on Windows, and applies each batch transactionally with lock and statement timeouts.
+
+## Simplified award entry
+
+Migration `20261123090800` makes transfer source school/course nullable while requiring either a canonical UW equivalent or an identified source course. Existing metadata, owner RLS, credit checks and unique UW-equivalent enforcement remain. The UI requires only the recognized UW course and credit amount; optional school/semester selections persist between additions, and new awards default to the current recognition term. Legacy general-credit records remain editable. Course-only awards use the same transfer cache, canonical prerequisite evidence and degree-credit path as earlier entries.
+
+Requirement cards use concise leaf titles under a single program heading and start collapsed. All source rows remain available inside each card. Validation includes 63 web tests (both live optimizer cases), typecheck, lint, build, and a rolled-back shared-DB test covering source-less insert/read/edit, duplicate rejection, invalid credit and owner isolation. The migration was then deployed with history and existing application data counts preserved; Docker remained stopped.

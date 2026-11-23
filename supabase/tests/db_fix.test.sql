@@ -39,6 +39,10 @@ select throws_ok($$insert into transfer_credits(institution,source_course,credit
 values('Other College','bad',-1,'2027SP')$$,'23514',null,'Negative transfer credits are rejected');
 select is((select count(*) from grade_entries),0::bigint,'Transfer credits create no UW grade entries');
 select is((select count(*) from my_chat_rooms()),0::bigint,'Transfer equivalence grants no current course chat');
+select lives_ok($$update transfer_credits set institution=null,source_course=null where equivalent_course_id='dbfix-cross'$$,'Recognized UW course does not require source metadata');
+select is((select credits from transfer_credits where equivalent_course_id='dbfix-cross'),3::numeric,'Course-only entry preserves recognized credits');
+select throws_ok($$insert into transfer_credits(credits,awarded_term) values(3,'2027SP')$$,'23514',null,'Transfer must identify a UW or source course');
+select throws_ok($$insert into transfer_credits(equivalent_course_id,credits,awarded_term) values('dbfix-cross',3,'2027SP')$$,'23505',null,'Source-less entries cannot duplicate UW credit');
 
 select lives_ok($$select save_schedule('2027SP','[{"course_id":"cs400","bundle_id":"cs400-A","credits":3}]','test-one')$$,'Atomic schedule save succeeds');
 select is((select count(*) from saved_schedules where state='active'),1::bigint,'One active plan');

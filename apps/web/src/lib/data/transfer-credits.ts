@@ -2,7 +2,7 @@ import {IS_MOCK, supabase} from '../supabase';
 import {getRemote, readStore, setRemote, useRemote, useStore, writeStore} from './local-store';
 
 export type TransferCredit = {
-  id: string; institution: string; source_course: string; equivalent_course_id: string | null;
+  id: string; institution: string | null; source_course: string | null; equivalent_course_id: string | null;
   credits: number; awarded_term: string; notes: string;
 };
 export type TransferDraft = Omit<TransferCredit, 'id'>;
@@ -19,11 +19,13 @@ export const useTransferCredits: () => TransferCredit[] = IS_MOCK
   });
 
 export function validateTransfer(draft: TransferDraft, existing: TransferCredit[], id?: string): string | null {
-  if (!draft.institution.trim() || draft.institution.trim().length > 160 || !draft.source_course.trim() || draft.source_course.trim().length > 160) return 'Enter the source school and course.';
+  if ((draft.institution?.trim().length ?? 0) > 160 || (draft.source_course?.trim().length ?? 0) > 160) return 'Keep school and source course names under 160 characters.';
+  if (!draft.equivalent_course_id && !draft.source_course?.trim()) return 'Choose the UW course recognized for this credit.';
   if (!Number.isFinite(draft.credits) || draft.credits <= 0 || draft.credits > 30 || Math.abs(Math.round(draft.credits * 100) - draft.credits * 100) > 1e-7) return 'Enter recognized credits between 0.01 and 30, with at most two decimal places.';
   if (!draft.awarded_term || draft.notes.length > 1000) return 'Choose the recognition semester and keep notes under 1,000 characters.';
-  if (existing.some(row => row.id !== id && ((row.institution.trim().toLowerCase() === draft.institution.trim().toLowerCase()
-    && row.source_course.trim().toLowerCase() === draft.source_course.trim().toLowerCase())
+  if (existing.some(row => row.id !== id && ((!!draft.institution?.trim() && !!draft.source_course?.trim()
+    && row.institution?.trim().toLowerCase() === draft.institution.trim().toLowerCase()
+    && row.source_course?.trim().toLowerCase() === draft.source_course.trim().toLowerCase())
     || (draft.equivalent_course_id && row.equivalent_course_id === draft.equivalent_course_id)))) return 'This transfer course or UW equivalent is already recorded.';
   return null;
 }
@@ -32,7 +34,7 @@ export async function saveTransferCredit(draft: TransferDraft, id?: string): Pro
   const existing = IS_MOCK ? readStore(KEY, EMPTY) : getRemote(KEY, EMPTY);
   const error = validateTransfer(draft, existing, id);
   if (error) throw new Error(error);
-  const row = {...draft, institution: draft.institution.trim(), source_course: draft.source_course.trim()};
+  const row = {...draft, institution: draft.institution?.trim() || null, source_course: draft.source_course?.trim() || null};
   let saved: TransferCredit;
   if (IS_MOCK) saved = {...row, id: id ?? crypto.randomUUID()};
   else {

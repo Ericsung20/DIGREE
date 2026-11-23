@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import {useRouter, useSearchParams} from 'next/navigation';
-import {Suspense, useEffect, useRef, useState} from 'react';
+import {Fragment, Suspense, useEffect, useRef, useState} from 'react';
 import {BackLink, EmptyNote, Frame, ICON, Spade, Svg} from '@/components/dg';
 import {currentTermOf, findCoursesByCodes, previousTermOf, useTerms, type CourseHit} from '@/lib/data/catalog';
 import {addCourseRecord, useCourseRecords} from '@/lib/data/course-records';
@@ -84,7 +84,7 @@ function Requirements() {
   const {program, groups, loading, error: catalogError, publishedGroupCount} = useRequirements();
   const terms = useTerms();
   const records = useCourseRecords();
-  const [opened, setOpened] = useState<number | null | undefined>(undefined);
+  const [opened, setOpened] = useState<number | null>(null);
   const [b, setB] = useState<'idle' | 'reading' | 'review' | 'unreadable'>('idle');
   const [fileName, setFileName] = useState('');
   const [read, setRead] = useState(0);
@@ -102,8 +102,7 @@ function Requirements() {
     else url.searchParams.delete('source');
     window.history.replaceState(null, '', url);
   }
-  const firstOpen = groups.findIndex((group) => !group.done);
-  const open = opened === undefined ? (firstOpen >= 0 ? firstOpen : null) : opened;
+  const open = opened;
 
   async function digWith(group: RequirementGroup) {
     const term = digTerm(terms, null);
@@ -181,11 +180,13 @@ function Requirements() {
       <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 12px 20px 24px; display: flex; flex-direction: column; gap: 8px')}>
         {A && loading && <EmptyNote role="status">Loading published requirements…</EmptyNote>}
         {A && catalogError && <EmptyNote role="alert">{catalogError}</EmptyNote>}
-        {A && !loading && !catalogError && <p style={s('margin: 0 4px 6px; font-size: 13px; color: #5F5A55')}>{publishedGroupCount ? `${publishedGroupCount} published requirement sections across your selected programs` : 'Select your program in your profile to see its published requirements.'}</p>}
+        {A && !loading && !catalogError && <p style={s('margin: 0 4px 6px; font-size: 13px; color: #5F5A55')}>{publishedGroupCount ? `${publishedGroupCount} requirement sections` : 'Select your program in your profile to see its published requirements.'}</p>}
         {A && groups.map((group, i) => {
           const isOpen = open === i;
           return (
-            <section key={group.id ?? group.name} className="rise" style={s(`flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; transition: box-shadow 260ms ease; animation-delay: ${Math.min(i * 35, 350)}ms; box-shadow: ${isOpen ? '0 10px 28px rgba(40,20,20,0.08)' : '0 1px 3px rgba(40,20,20,0.06)'}`)}>
+            <Fragment key={group.id ?? group.name}>
+            {group.programName && groups[i - 1]?.programName !== group.programName && <h2 style={s('margin: 14px 4px 4px; font-size: 17px; font-weight: 900')}>{group.programName}</h2>}
+            <section className="rise" style={s(`flex-shrink: 0; border-radius: 22px; background: #FFFFFF; overflow: hidden; transition: box-shadow 260ms ease; animation-delay: ${Math.min(i * 35, 350)}ms; box-shadow: ${isOpen ? '0 10px 28px rgba(40,20,20,0.08)' : '0 1px 3px rgba(40,20,20,0.06)'}`)}>
               <button type="button" aria-expanded={isOpen} onClick={() => setOpened(isOpen ? null : i)} style={s('width: 100%; min-height: 64px; padding: 10px 14px 10px 16px; border: none; background: transparent; color: #1D1B1A; display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left')}>
                 <span style={s('flex: 1; display: flex; flex-direction: column; gap: 6px')}>
                   <span style={s('display: flex; align-items: center; justify-content: space-between; gap: 8px')}><span style={s('font-size: 15px; font-weight: 900')}>{group.name}</span><span style={s(`flex-shrink: 0; font-size: 13px; font-weight: 900; color: ${group.done ? '#355A1F' : '#5F5A55'}`)}>{group.done ? 'Done' : group.count}</span></span>
@@ -221,6 +222,7 @@ function Requirements() {
                 </div>
               )}
             </section>
+            </Fragment>
           );
         })}
         {A && (

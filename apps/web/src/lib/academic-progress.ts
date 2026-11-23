@@ -4,10 +4,25 @@ import type {CatalogRequirement} from './data/academic-catalog';
 export type CreditEvidence = {course_id: string; codes: string[]; credits: number; state: 'd' | 'p'; transfer?: boolean};
 export type EstimatedGroup = {
   id?: string;
+  programName?: string;
   name: string; count: string; progress: number; done: boolean; dig: boolean; review?: boolean; source_url?: string;
   items: {label: string; state: 'd' | 'p' | 'n'; courseCode?: string}[];
   rules?: {id: string; kind: string; label: string; description: string; credits: string | null; conditions: string[]; courses: string[]}[];
 };
+
+export function requirementTitle(heading: string): string {
+  const title = (heading.split(' / ').map(part => part.trim()).filter(Boolean).at(-1) ?? heading).replace(/([a-z])\d+$/i, '$1');
+  if (/^core general education/i.test(title)) return 'General education';
+  if (/^university degree and quality of work/i.test(title)) return 'Degree & GPA';
+  if (/^bachelor of .+ degree requirements$/i.test(title)) return 'College requirements';
+  if (/^college of .+ degree requirements:/i.test(title)) return 'College overview';
+  if (/^foundational math courses$/i.test(title)) return 'Foundational math';
+  if (/^basic computer sciences$/i.test(title)) return 'Core courses';
+  if (/^foundational data science courses$/i.test(title)) return 'Data science core';
+  if (/^non[–-]L&S students/i.test(title)) return 'Non-L&S students';
+  if (/^residence (and|&) quality of work$/i.test(title)) return 'GPA & residency';
+  return title;
+}
 
 export function requirementOverlapIds(groups: CatalogRequirement[], evidence: CreditEvidence[]): Set<string> {
   const canonical = new Map(evidence.flatMap(row => row.codes.flatMap(expandCourseCode).map(code => [code, row.course_id] as const)));
@@ -78,7 +93,7 @@ export function estimateRequirement(group: CatalogRequirement, evidence: CreditE
     || rows.some(row => !!row.references?.length) || commands.length > 1 || required === null || !Number.isFinite(required) || required < 1;
   return {
     id: group.id,
-    name: group.heading, count: complex ? 'Needs review' : `${Math.min(completed, required!)} of ${required}${current ? ` · ${current} now` : ''}`,
+    name: group.heading, count: complex ? completed ? `${completed} matched` : 'Review' : `${Math.min(completed, required!)} of ${required}${current ? ` · ${current} now` : ''}`,
     progress: required ? Math.min(1, (completed + current * .5) / required) : 0,
     done: !complex && completed >= required!, review: complex, source_url: group.source_url ?? undefined,
     items: items.length ? items : rows.flatMap(row => row.label ? [{label: `${row.label}${row.credit_conditions?.length ? ` · ${row.credit_conditions.join('; ')}` : ''}`, state: 'n' as const}] : []),
