@@ -1,5 +1,5 @@
 import {expect, test} from 'vitest';
-import {parseDigInputs, toGenerateRequest, type CatalogRows, type DigInputs} from './dig-request';
+import {parseDigInputs, toGenerateRequest, withoutOnline, type CatalogRows, type DigInputs} from './dig-request';
 import {assertNoUserData} from './optimizer';
 import {expandBreadthCodes, generalEducationTags, matchingRawBreadthCodes} from './breadth';
 
@@ -28,6 +28,14 @@ test('parseDigInputs rejects out-of-contract values', () => {
   expect(bad({balance_major_courses: 'true'})).toBe(true);
   expect(bad({max_major_courses: 2, balance_major_courses: true})).toBe(true);
   expect(bad({max_major_courses: 1.5})).toBe(true);
+  expect(bad({online: 'no'})).toBe(true);
+});
+
+test('parseDigInputs passes the online preference only when online classes are off', () => {
+  expect(parseDigInputs({...body, online: false})).toMatchObject({online: false});
+  expect(parseDigInputs({...body, online: true})).not.toHaveProperty('online');
+  // No must-take course is a valid request: DIG then picks every course.
+  expect(parseDigInputs({...body, required: []})).toMatchObject({required: []});
 });
 
 const inputs: DigInputs = {term: '1274', minCredits: 6, maxCredits: 7, required: ['a'], earliest: 480, latest: 1140, blockedDays: []};
@@ -65,6 +73,21 @@ test('toGenerateRequest maps catalog rows to the contract without guessing', () 
   expect(b.section_bundles[0].meetings[0].building_id).toBeNull(); // unknown building stays null
   expect(req.walking_edges).toEqual([]); // no walking data means none is sent
   expect(() => assertNoUserData(req)).not.toThrow();
+});
+
+test('turning online classes off drops online and asynchronous sections', () => {
+  const online: CatalogRows = {
+    ...rows,
+    bundles: [...rows.bundles, {course_id: 'a', bundle_id: 'a-web', seat_status: 'open', instructor_score: null}],
+    meetings: [...rows.meetings, {course_id: 'a', bundle_id: 'a-web', day: 'WED', start_min: 600, end_min: 650, mode: 'online_sync', building_id: null}],
+  };
+  const req = toGenerateRequest({...inputs, online: false}, online, 'req-online');
+  expect(req.courses.map((course) => [course.course_id, course.section_bundles.map((bundle) => bundle.bundle_id)])).toEqual([['a', ['a-1']], ['b', ['b-1']]]);
+  expect(toGenerateRequest(inputs, online, 'req-all').courses[0].section_bundles).toHaveLength(2);
+
+  // A must-take offered only online keeps its sections; an optional one goes.
+  const onlyOnline = toGenerateRequest(inputs, online, 'x').courses.map((course) => ({...course, section_bundles: course.section_bundles.filter((bundle) => bundle.bundle_id !== 'a-1' && bundle.bundle_id !== 'b-1')}));
+  expect(withoutOnline(onlyOnline).map((course) => course.course_id)).toEqual(['a']);
 });
 
 test('breadth preference reaches the optimizer with catalog codes', () => {

@@ -21,7 +21,7 @@ npm run dev
 
 Open [localhost:3000](http://localhost:3000). The sample environment uses synthetic data and requires no sign-in.
 
-For a full-stack run, start the [local Supabase stack](supabase/README.md) and [optimizer](apps/optimizer/README.md). In the web environment, set `NEXT_PUBLIC_DIGREE_DATA=supabase`, `DIGREE_MOCK=0`, the Supabase URL and public client key, and the optimizer URL. Save credentials and local configuration in the ignored `apps/web/.env.local`.
+For a full-stack run, start the [local Supabase stack](supabase/README.md) and the [optimizer](apps/optimizer/README.md) with `DIGREE_DISTINCT_COURSE_SETS=1`. In the web environment, set `NEXT_PUBLIC_DIGREE_DATA=supabase`, `DIGREE_MOCK=0`, the Supabase URL and public client key, and the optimizer URL. Save credentials and local configuration in the ignored `apps/web/.env.local`.
 
 ## Shared interfaces
 

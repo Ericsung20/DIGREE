@@ -51,6 +51,10 @@ function AddCourse() {
   const order = terms.findIndex((item) => item.id === term) - terms.findIndex((item) => item.id === currentTerm);
   const status: CourseRecordStatus = forDig || currentTerm === null || order > 0 ? 'planned' : order < 0 ? 'completed' : 'enrolled_self_reported';
   const planning = status === 'planned' && !editing;
+  // A past semester takes several courses in one go, the way onboarding's Taken tab does.
+  const batch = status === 'completed' && !editing;
+  const filed = batch ? records.filter((record) => record.term === term && record.status === 'completed') : [];
+  const filedIds = new Set(filed.map((record) => record.course_id));
   const course = chosen ?? (q === null ? editCourse : null);
   const text = q ?? (editCourse ? editCourse.code : '');
   const key = course ? `${term}|${course.id}` : '';
@@ -83,6 +87,7 @@ function AddCourse() {
       const found = await searchCourses(value);
       if (ticket !== latest.current) return;
       setHits(found);
+      if (batch) return;
       const exact = found.find((hit) => [hit.code, shortCode(hit.code)].some((code) => code.toLowerCase() === value.trim().toLowerCase()));
       if (exact) setChosen(exact);
     } catch {
@@ -118,6 +123,24 @@ function AddCourse() {
     }
   }
 
+  async function file(hit: CourseHit) {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const failure = await addCourseRecord({term, course_id: hit.id, course_code: hit.code, credits: hit.credit_options[0], status: 'completed', bundle_id: null, counts_toward_major: false, source: 'manual'}, currentTerm);
+      setError(failure);
+      if (!failure) {
+        setQ('');
+        setHits([]);
+      }
+    } catch {
+      setError('Couldn’t add the course. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function remove() {
     if (!editing || saving) return;
     setSaving(true);
@@ -125,7 +148,7 @@ function AddCourse() {
     router.push(back);
   }
 
-  const suggestions = course ? [] : hits.slice(0, 8);
+  const suggestions = batch ? hits.filter((hit) => !filedIds.has(hit.id)).slice(0, 8) : course ? [] : hits.slice(0, 8);
   const cta = editing ? 'Change section' : planning ? `Add to ${termLabel} must-takes` : conflict ? 'Add anyway' : `Add to ${termLabel}`;
   return (
     <Frame css={CSS} numeric>
@@ -134,7 +157,7 @@ function AddCourse() {
           <CloseLink href={back} label="Close" />
           <span style={s('font-size: 14px; font-weight: 800; color: #5F5A55')}>{termLabel}</span>
         </div>
-        <h1 style={s('margin: 0; padding-left: 10px; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>{editing ? 'Change section' : 'Add a course'}</h1>
+        <h1 style={s('margin: 0; padding-left: 10px; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>{editing ? 'Change section' : batch ? 'Add courses' : 'Add a course'}</h1>
       </header>
 
       <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 14px 20px 12px; display: flex; flex-direction: column; gap: 14px')}>
@@ -147,7 +170,8 @@ function AddCourse() {
         {suggestions.length > 0 && (
           <div className="rise" style={s('display: flex; flex-wrap: wrap; gap: 8px')}>
             {suggestions.map((hit) => (
-              <button key={hit.id} type="button" className="press" onClick={() => {
+              <button key={hit.id} type="button" className="press" disabled={batch && saving} onClick={() => {
+                if (batch) return void file(hit);
                 setQ(hit.code);
                 setChosen(hit);
               }} style={s('height: 38px; padding: 0 14px; box-sizing: border-box; border-radius: 19px; border: 2px dashed #C9C3BC; background: transparent; color: #3D3936; font-size: 14px; font-weight: 800; display: inline-flex; align-items: center; gap: 6px; cursor: pointer')}>
@@ -158,14 +182,34 @@ function AddCourse() {
         )}
         {!course && text.trim().length >= 2 && hits.length === 0 && !error && <EmptyNote>No course matches “{text.trim()}”.</EmptyNote>}
 
-        {course && (
+        {batch && (
+          <div className="rise" style={s('display: flex; flex-direction: column; gap: 8px; animation-delay: 60ms')}>
+            <span style={s('padding: 0 4px; font-size: 14px; font-weight: 800')}>Taken in {termLabel} · {filed.length}</span>
+            <div style={s('display: flex; flex-wrap: wrap; gap: 8px')}>
+              {filed.map((record) => {
+                const label = record.course_code ?? record.course_id;
+                return (
+                  <span key={record.id} style={s('height: 42px; padding: 0 4px 0 14px; border-radius: 21px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.08); display: inline-flex; align-items: center; gap: 2px; font-size: 14px; font-weight: 800')}>
+                    {label}
+                    <button type="button" className="press" aria-label={`Remove ${label}`} onClick={() => void removeCourseRecord(record.id)} style={s('width: 34px; height: 34px; border: none; background: transparent; color: #6E6863; display: flex; align-items: center; justify-content: center; border-radius: 17px; cursor: pointer; padding: 0')}>
+                      <Svg size={13} sw={3} join={false}>{ICON.x}</Svg>
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+            {filed.length === 0 && <EmptyNote>Search, then tap each course you took. Set a section later from the course.</EmptyNote>}
+          </div>
+        )}
+
+        {course && !batch && (
           <div className="rise" style={s('display: flex; align-items: center; justify-content: space-between; padding: 0 4px; animation-delay: 60ms')}>
             <div style={s('display: flex; flex-direction: column')}><span style={s('font-size: 18px; font-weight: 900')}>{course.code}</span><span style={s('font-size: 14px; font-weight: 600; color: #5F5A55')}>{course.title ?? ''}</span></div>
             <span style={s('flex-shrink: 0; height: 30px; padding: 0 12px; border-radius: 15px; background: #ECE8E3; font-size: 14px; font-weight: 900; display: flex; align-items: center')}>{course.credit_options[0]} cr</span>
           </div>
         )}
 
-        {course && !planning && bundles && bundles.length > 0 && (
+        {course && !planning && !batch && bundles && bundles.length > 0 && (
           <div role="radiogroup" aria-label="Sections" className="rise" style={s('display: flex; flex-direction: column; gap: 8px; animation-delay: 120ms')}>
             {historical && <button type="button" role="radio" aria-checked={!cur} onClick={() => setPick('')} className="press" style={s(`min-height: 44px; padding: 0 14px; border-radius: 20px; text-align: left; background: #FFFFFF; color: #1D1B1A; font-weight: 800; cursor: pointer; border: ${cur ? '1px solid #C9C3BC' : '2px solid #1D1B1A'}`)}>Unknown section</button>}
             {bundles.map((bundle) => {
@@ -180,9 +224,9 @@ function AddCourse() {
             })}
           </div>
         )}
-        {course && !planning && bundles && bundles.length === 0 && <EmptyNote>No section times for {termLabel} yet. You can still add the course.</EmptyNote>}
+        {course && !planning && !batch && bundles && bundles.length === 0 && <EmptyNote>No section times for {termLabel} yet. You can still add the course.</EmptyNote>}
 
-        {course && !planning && cur && (
+        {course && !planning && !batch && cur && (
           <section aria-label="Where it lands" className="rise" style={s('padding: 14px; border-radius: 22px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06); display: flex; flex-direction: column; gap: 8px; animation-delay: 180ms')}>
             <div style={s('display: flex; align-items: center; justify-content: space-between')}>
               <span style={s('font-size: 14px; font-weight: 800')}>Where it lands</span>
@@ -206,7 +250,9 @@ function AddCourse() {
       </main>
 
       <div style={s(editing ? 'flex-shrink: 0; padding: 10px 20px 22px; display: flex; flex-direction: column; gap: 4px' : 'flex-shrink: 0; padding: 10px 20px 28px')}>
-        {course
+        {batch
+          ? <button type="button" className="press" onClick={() => router.push(back)} style={s(CTA)}>Done</button>
+          : course
           ? <button type="button" className="press" onClick={() => void save()} disabled={saving} style={s(CTA)}>{cta}</button>
           : <span aria-disabled="true" style={s('height: 58px; border-radius: 22px; background: #E4DFD9; color: #6E6863; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 900')}>{`Add to ${termLabel}`}</span>}
         {editing && <button type="button" onClick={() => void remove()} disabled={saving} style={s('align-self: center; min-height: 40px; border: none; background: transparent; display: flex; align-items: center; color: #3D3936; font-size: 14px; font-weight: 800; cursor: pointer')}>Remove from {termLabel}</button>}

@@ -52,6 +52,30 @@ async function walkingEdges(db: Db, meetings: CatalogRows['meetings']): Promise<
   return edges;
 }
 
+/** Up to 12 courses of one subject that run this term with an open or unknown seat status. */
+async function subjectCourses(db: Db, term: string, subject: string): Promise<CatalogRows['courses']> {
+  const {data, error} = await db.from('courses').select(`${COURSE_COLUMNS}, section_bundles!inner()`)
+    .ilike('code', `${subject} %`).eq('section_bundles.term', term).neq('section_bundles.seat_status', 'full')
+    .order('code').limit(12);
+  if (error) throw error;
+  return data;
+}
+
+const subjectOf = (code: string) => /^([A-Z &-]+) \d+[A-Z]?$/i.exec(code)?.[1];
+const courseNumber = (code: string) => Number(/(\d+)[A-Z]?$/i.exec(code)?.[1] ?? 999);
+
+/** Courses on the student's program requirement lists that run this term with seats, lowest numbers first. */
+async function programCourses(db: Db, term: string, programId: string | null): Promise<CatalogRows['courses']> {
+  const codes = [...await majorCourseCodes(db, programId)];
+  const pages = await Promise.all(batches(codes, BATCH).map(async (batch) => {
+    const {data, error} = await db.from('courses').select(`${COURSE_COLUMNS}, section_bundles!inner()`)
+      .in('code', batch).eq('section_bundles.term', term).neq('section_bundles.seat_status', 'full').order('code');
+    if (error) throw error;
+    return data;
+  }));
+  return pages.flat().sort((a, b) => courseNumber(a.code) - courseNumber(b.code) || a.code.localeCompare(b.code));
+}
+
 type RequisiteRow = {course_id: string; course_aliases: string[] | null; enrollment_requisites: string | null; requirement_groups: Record<string, number[]> | null};
 
 async function loadCourseHistory(db: Db, term: string): Promise<PriorAttempt[]> {
@@ -137,7 +161,6 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   const plannedIds = plannedFlags.map((row) => row.course_id);
   const plannedSet = new Set(plannedIds);
   const explicitMajor = new Set(plannedFlags.filter((row) => row.counts_toward_major).map((row) => row.course_id));
-  if (plannedIds.length === 0) return {error: 'Add a must-take course for this term first.'};
   if (inputs.required.some((id) => !plannedSet.has(id))) return {error: 'Your must-take courses changed. Go back to your conditions and dig again.'};
   const required = new Set(inputs.required);
   const [catalog, history, profile] = await Promise.all([
@@ -197,18 +220,12 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   const relatedCanHelp = inputs.related && availableCredits < inputs.minCredits;
   if (breadthCanHelp || relatedCanHelp) {
     const subjects = relatedCanHelp ? [...new Set(courses.flatMap(({code}) => {
-      const subject = /^([A-Z &-]+) \d+[A-Z]?$/i.exec(code)?.[1];
+      const subject = subjectOf(code);
       return subject ? [subject] : [];
     }))].slice(0, 3) : [];
     const [preferredRows, ...extras] = await Promise.all([
       breadthCanHelp ? allDesignationCourses(db, term, preferred) : [],
-      ...subjects.map(async (subject) => {
-        const {data, error} = await db.from('courses').select(`${COURSE_COLUMNS}, section_bundles!inner()`)
-          .ilike('code', `${subject} %`).eq('section_bundles.term', inputs.term).neq('section_bundles.seat_status', 'full')
-          .order('code').limit(12);
-        if (error) throw error;
-        return data;
-      }),
+      ...subjects.map((subject) => subjectCourses(db, term, subject)),
     ]);
     const unique = [...new Map([...extras.flat(), ...preferredRows].filter((course) => !plannedSet.has(course.id)).map((course) => [course.id, course])).values()];
     const extraRequisites = await loadRequisites(db, term, unique.map(course => course.id));
@@ -216,8 +233,26 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
     const {accepted: eligible} = assess(unique, extraRequisites);
     courses.push(...(breadthCanHelp ? eligible : eligible.slice(0, Math.max(0, 20 - (courses.length - inputs.required.length)))));
   }
+  if (!required.size) {
+    // Nothing to build around: DIG picks every course. Start from the student's program requirements;
+    // without a program, use the subjects of courses they have taken.
+    const skip = new Set([...courses.map(({id}) => id), ...history.map((record) => record.course_id)]);
+    let pool = (await programCourses(db, term, profile.data?.program_id ?? null)).filter((course) => !skip.has(course.id));
+    if (!pool.length) {
+      const subjects = [...new Set(history.flatMap((record) => {
+        const subject = record.courses?.code ? subjectOf(record.courses.code) : undefined;
+        return subject ? [subject] : [];
+      }))].slice(0, 3);
+      pool = (await Promise.all(subjects.map((subject) => subjectCourses(db, term, subject)))).flat().filter((course) => !skip.has(course.id));
+    }
+    const poolRequisites = await loadRequisites(db, term, pool.map((course) => course.id));
+    for (const [id, row] of poolRequisites) aliases.set(id, row.course_aliases ?? []);
+    courses.push(...assess(pool, poolRequisites).accepted.slice(0, Math.max(0, 20 - courses.length)));
+  }
   const ids = courses.map(({id}) => id);
-  if (ids.length === 0) return {error: 'No planned courses can be used. Check their requisites or add courses.'};
+  if (ids.length === 0) return {error: required.size
+    ? 'No planned courses can be used. Check their requisites or add courses.'
+    : 'DIG found no courses to suggest for this term. Add a must-take course, pick a course designation, or set your academic program.'};
   if (inputs.preferredBreadths?.some((code) => code in GENERAL_ED_CODES || code === 'ETHNIC')) {
     const designationTags = new Map<string, string[]>();
     for (let start = 0; start < ids.length; start += 100) {
@@ -281,5 +316,7 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
       .map(record => record.course_id),
   };
   // A random id per request: nothing that identifies the user leaves this server.
-  return toGenerateRequest(inputs, rows, randomUUID());
+  const request = toGenerateRequest(inputs, rows, randomUUID());
+  if (!request.courses.length) return {error: 'Every course DIG found meets online only. Allow online classes or add a must-take course.'};
+  return request;
 }

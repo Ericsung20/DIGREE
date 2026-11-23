@@ -16,8 +16,13 @@ export type DigConditions = {
   latest: number;
   breadths: string[];
   majorPreference: 'balanced' | 'none' | number;
+  /** False keeps online and asynchronous sections out of the schedule. */
+  online: boolean;
 };
-export const DEFAULT_CONDITIONS: DigConditions = {credits: 14, days: [true, true, true, true, false], earliest: 540, latest: 960, breadths: [], majorPreference: 'balanced'};
+export const DEFAULT_CONDITIONS: DigConditions = {credits: 14, days: [true, true, true, true, false], earliest: 540, latest: 960, breadths: [], majorPreference: 'balanced', online: true};
+/** The choices the Hours pickers offer, in minutes after midnight. */
+export const EARLIEST_RANGE = {from: 420, to: 1140}; // 7 AM to 7 PM
+export const LATEST_RANGE = {from: 540, to: 1320}; // 9 AM to 10 PM
 export const CREDIT_LIMIT = 18;
 
 /** The request body the browser posts to /api/dig/generate. `mustCredits` is the total of the must-take courses. */
@@ -36,6 +41,7 @@ export function toDigBody(term: string, conditions: DigConditions, required: str
     max_major_courses: typeof conditions.majorPreference === 'number' ? conditions.majorPreference : null,
     balance_major_courses: conditions.majorPreference === 'balanced',
     related: true,
+    online: conditions.online,
   };
 }
 
@@ -47,7 +53,7 @@ export function conditionsChip(termLabel: string, conditions: DigConditions): st
     const option = BREADTH_OPTIONS.find((item) => item.code === code);
     return option ? [code.length === 1 ? code : option.label] : [];
   });
-  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}${typeof conditions.majorPreference === 'number' ? ` · ≤${conditions.majorPreference} major` : ''}${breadths.length ? ` · ${breadths.join(', ')}` : ''}`;
+  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}${typeof conditions.majorPreference === 'number' ? ` · ≤${conditions.majorPreference} major` : ''}${conditions.online ? '' : ' · In person'}${breadths.length ? ` · ${breadths.join(', ')}` : ''}`;
 }
 
 /** Walking facts for one result, worked out next to the walking data and sent with the response. */
@@ -97,7 +103,43 @@ export function walkChecks(results: S['ScheduleResult'][], edges: S['WalkingEdge
 }
 
 /** `sample` marks results that come from the shared fixture rather than the signed-in user's courses. */
-export type DigResponse = S['GenerateResponse'] & {walks?: WalkCheck[]; sample?: boolean};
+export type DigResponse = S['GenerateResponse'] & {walks?: WalkCheck[]; sample?: boolean; sections?: SectionChoices};
+
+/** One section a result's course could switch to on the Schedule Preview. */
+export type SectionChoice = {bundle_id: string; seat_status: S['SectionBundle']['seat_status']; meetings: S['Meeting'][]};
+/** By course id: every section of the courses in the results that meets the conditions on its own. */
+export type SectionChoices = Record<string, SectionChoice[]>;
+
+/**
+ * Sections the preview can switch between. A section qualifies when it keeps to the hours and days
+ * the optimizer was given; whether it clashes with the other courses depends on what else is
+ * picked, so the preview checks that itself.
+ */
+export function sectionChoices(results: S['ScheduleResult'][], request: Pick<S['GenerateRequest'], 'courses' | 'constraints'>): SectionChoices {
+  const {earliest_start_min: earliest, latest_end_min: latest, blocked_days: blocked} = request.constraints;
+  const wanted = new Set(results.flatMap((result) => result.selected.map((entry) => entry.course_id)));
+  const choices: SectionChoices = {};
+  for (const course of request.courses) {
+    if (!wanted.has(course.course_id)) continue;
+    choices[course.course_id] = course.section_bundles
+      .filter((bundle) => bundle.meetings.every((meeting) => meeting.start_min >= earliest && meeting.end_min <= latest && !blocked.includes(meeting.day)))
+      .map(({bundle_id, seat_status, meetings}) => ({bundle_id, seat_status, meetings}));
+  }
+  return choices;
+}
+
+/** The first pair of selected courses that meet at the same time, or null when nothing overlaps. */
+export function sectionClash(selected: Pick<S['SelectedBundle'], 'course_code' | 'meetings'>[]): {codes: [string, string]; day: Day} | null {
+  for (let i = 0; i < selected.length; i++) {
+    for (let j = i + 1; j < selected.length; j++) {
+      for (const a of selected[i].meetings) {
+        const b = selected[j].meetings.find((meeting) => meeting.day === a.day && meeting.start_min < a.end_min && a.start_min < meeting.end_min);
+        if (b) return {codes: [selected[i].course_code, selected[j].course_code], day: a.day};
+      }
+    }
+  }
+  return null;
+}
 
 /** One card of the Recommendations deck. */
 export type DigOption = {
@@ -182,14 +224,15 @@ export function blockers(reasons: string[], conditions: DigConditions, mustTake:
 /** One-tap ways to relax the conditions after an empty result. At most three are offered. */
 export function loosenChoices(conditions: DigConditions, mustCredits: number): {label: string; apply: (current: DigConditions) => DigConditions}[] {
   const choices: {label: string; apply: (current: DigConditions) => DigConditions}[] = [];
-  if (conditions.latest < 1260) {
-    const later = Math.min(1260, conditions.latest + 90);
+  if (conditions.latest < LATEST_RANGE.to) {
+    const later = Math.min(LATEST_RANGE.to, conditions.latest + 90);
     choices.push({label: `End by ${hourLabel(later)}`, apply: (current) => ({...current, latest: later})});
   }
   const off = dayOff(conditions);
   if (off >= 0) choices.push({label: `Allow ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][off]}`, apply: (current) => ({...current, days: current.days.map((on, day) => on || day === off)})});
-  if (conditions.earliest > 420) {
-    const earlier = Math.max(420, conditions.earliest - 60);
+  if (!conditions.online) choices.push({label: 'Allow online classes', apply: (current) => ({...current, online: true})});
+  if (conditions.earliest > EARLIEST_RANGE.from) {
+    const earlier = Math.max(EARLIEST_RANGE.from, conditions.earliest - 60);
     choices.push({label: `Start at ${hourLabel(earlier)}`, apply: (current) => ({...current, earliest: earlier})});
   }
   if (conditions.credits > Math.max(mustCredits, 1)) {

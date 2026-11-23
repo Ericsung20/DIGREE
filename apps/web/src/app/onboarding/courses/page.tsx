@@ -132,9 +132,13 @@ function CourseHistory() {
                   <span style={s(`width: 12px; height: 12px; border-radius: 6px; flex-shrink: 0; background: ${toneOf(record.course_id).dot}`)} />
                   <span style={s('flex: 1; display: flex; flex-direction: column; min-width: 0')}><span style={s('font-size: 16px; font-weight: 900')}>{code(record)}</span><span style={s('font-size: 13px; font-weight: 600; color: #5F5A55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{details[record.course_id]?.title ?? ''}</span></span>
                   {list.length > 0 && (
-                    <button type="button" className="press" aria-label={`${code(record)} section ${label ?? 'not set'}, tap to change`} onClick={() => void changeCourseSection(record.id, list[(index + 1) % list.length].bundle_id).then(setError)} style={s('height: 40px; padding: 0 10px 0 12px; border: none; border-radius: 14px; background: #F1EEEA; color: #1D1B1A; font-size: 14px; font-weight: 900; display: flex; align-items: center; gap: 4px; cursor: pointer')}>
-                      {label ?? 'Section'}<Svg size={14} sw={2.8}>{ICON.down}</Svg>
-                    </button>
+                    <label className="press" style={s('position: relative; flex-shrink: 0; max-width: 160px; height: 40px; padding: 0 10px 0 12px; border-radius: 14px; background: #F1EEEA; color: #1D1B1A; font-size: 14px; font-weight: 900; display: flex; align-items: center; gap: 4px; cursor: pointer')}>
+                      <span style={s('min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{label ?? 'Section'}</span><Svg size={14} sw={2.8}>{ICON.down}</Svg>
+                      <select className="dg-native" aria-label={`${code(record)} section, ${label ?? 'not set'}`} value={index >= 0 ? list[index].bundle_id : ''} onChange={(event) => void changeCourseSection(record.id, event.target.value).then(setError)}>
+                        {index < 0 && <option value="" disabled>Pick a section</option>}
+                        {list.map((bundle) => <option key={bundle.bundle_id} value={bundle.bundle_id}>{bundle.label}{bundle.summary ? ` · ${bundle.summary}` : ''}</option>)}
+                      </select>
+                    </label>
                   )}
                 </div>
               );

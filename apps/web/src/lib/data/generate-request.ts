@@ -1,7 +1,7 @@
 import type {components} from '../contract/types';
 import fixture from '../../mocks/request.json';
 import {BREADTH_OPTIONS, expandBreadthCodes} from '../breadth';
-import {parseDigInputs, weightsFor} from '../dig-request';
+import {parseDigInputs, weightsFor, withoutOnline} from '../dig-request';
 
 export type GenerateRequest = components['schemas']['GenerateRequest'];
 type Candidate = components['schemas']['CandidateCourse'];
@@ -60,5 +60,6 @@ export function buildSampleGenerateRequest(raw: unknown): GenerateRequest | {err
   };
   body.preferences = {weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths, inputs.balanceMajorCourses), preferred_breadths: inputs.preferredBreadths ?? []};
   body.courses = [...body.courses.map((course) => ({...course, is_required: inputs.required.includes(course.course_id), is_major_course: course.course_id === 'cs400', breadth: null})), ...optional];
+  if (inputs.online === false) body.courses = withoutOnline(body.courses);
   return body;
 }

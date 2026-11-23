@@ -1,7 +1,8 @@
 import {expect, test} from 'vitest';
 import expected from '../mocks/expected.json';
 import request from '../mocks/request.json';
-import {DEFAULT_CONDITIONS, blockers, conditionsChip, describeOptions, loosenChoices, toDigBody, walkChecks, type DigResponse} from './dig-view';
+import {DEFAULT_CONDITIONS, blockers, conditionsChip, describeOptions, loosenChoices, sectionChoices, sectionClash, toDigBody, walkChecks, type DigResponse} from './dig-view';
+import type {GenerateRequest} from './dig-request';
 import {parseDigInputs} from './dig-request';
 
 const response = expected as DigResponse;
@@ -20,6 +21,10 @@ test('toDigBody aims one credit under the target at most, blocks days off and th
   expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, majorPreference: 2}, ['cs400'], 3).max_major_courses).toBe(2);
   expect(body.balance_major_courses).toBe(true);
   expect(toDigBody('2027SP', {...DEFAULT_CONDITIONS, majorPreference: 'none'}, ['cs400'], 3).balance_major_courses).toBe(false);
+  expect(body.online).toBe(true);
+  const inPerson = toDigBody('2027SP', {...DEFAULT_CONDITIONS, online: false}, [], 0);
+  expect(inPerson).toMatchObject({online: false, required: [], min_credits: 13, max_credits: 14});
+  expect(parseDigInputs(inPerson)).toMatchObject({online: false, required: []});
 });
 
 test('conditionsChip reads like the design: term, credits, days, hours', () => {
@@ -28,6 +33,31 @@ test('conditionsChip reads like the design: term, credits, days, hours', () => {
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, breadths: ['H']})).toContain(' · H');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, breadths: ['COMM_B', 'ETHNIC']})).toContain(' · Comm B, Ethnic Studies');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, majorPreference: 2})).toContain(' · ≤2 major');
+  expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, online: false})).toBe('Fall 2026 · 14 cr · M–Th · 9–4 · In person');
+});
+
+test('sectionChoices offers every section of the chosen courses that keeps to the hours and days', () => {
+  const req = request as GenerateRequest;
+  const choices = sectionChoices(response.results, req);
+  const chosen = new Set(response.results.flatMap((result) => result.selected.map((entry) => entry.course_id)));
+  expect(Object.keys(choices).sort()).toEqual([...chosen].sort());
+  for (const [courseId, list] of Object.entries(choices)) {
+    const course = req.courses.find((item) => item.course_id === courseId)!;
+    expect(list.map((section) => section.bundle_id)).toEqual(course.section_bundles.map((bundle) => bundle.bundle_id).filter((id) => list.some((section) => section.bundle_id === id)));
+    // Every section a result picked is on its list.
+    for (const result of response.results) for (const entry of result.selected) if (entry.course_id === courseId) expect(list.map((section) => section.bundle_id)).toContain(entry.bundle_id);
+  }
+  // Tightening the hours removes the sections that fall outside them.
+  const morning = sectionChoices(response.results, {...req, constraints: {...req.constraints, latest_end_min: 600}});
+  expect(Object.values(morning).flat().every((section) => section.meetings.every((meeting) => meeting.end_min <= 600))).toBe(true);
+  const noMonday = sectionChoices(response.results, {...req, constraints: {...req.constraints, blocked_days: ['MON']}});
+  expect(Object.values(noMonday).flat().some((section) => section.meetings.some((meeting) => meeting.day === 'MON'))).toBe(false);
+});
+
+test('sectionClash names the first two courses that meet at the same time', () => {
+  const at = (day: 'MON' | 'TUE', start: number, end: number) => ({day, start_min: start, end_min: end, mode: 'in_person' as const, building_id: null});
+  expect(sectionClash([{course_code: 'A 1', meetings: [at('MON', 600, 650)]}, {course_code: 'B 2', meetings: [at('MON', 650, 700)]}])).toBeNull();
+  expect(sectionClash([{course_code: 'A 1', meetings: [at('MON', 600, 650)]}, {course_code: 'B 2', meetings: [at('TUE', 600, 650), at('MON', 640, 700)]}])).toEqual({codes: ['A 1', 'B 2'], day: 'MON'});
 });
 
 test('walkChecks finds the longest single walk and matches the optimizer’s weekly totals', () => {
@@ -70,4 +100,7 @@ test('an empty result explains itself and offers ways to loosen the conditions',
   expect(choices[0].apply(DEFAULT_CONDITIONS).latest).toBe(1050);
   expect(choices[1].apply(DEFAULT_CONDITIONS).days).toEqual([true, true, true, true, true]);
   expect(choices[2].apply(DEFAULT_CONDITIONS).earliest).toBe(480);
+  expect(loosenChoices({...DEFAULT_CONDITIONS, online: false}, 7).map((choice) => choice.label)).toContain('Allow online classes');
+  // The end of the day goes as late as 10 PM.
+  expect(loosenChoices({...DEFAULT_CONDITIONS, latest: 1260}, 7)[0].apply(DEFAULT_CONDITIONS).latest).toBe(1320);
 });
