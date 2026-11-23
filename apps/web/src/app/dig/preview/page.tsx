@@ -13,6 +13,7 @@ import {IS_MOCK} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
 import {WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
 import {DIG_TONES} from '@/lib/ui/palette';
+import {scheduleUrl} from '@/lib/schedule-view';
 
 const CSS = `
 button{font:inherit}
@@ -99,9 +100,10 @@ function SchedulePreview() {
       });
       await Promise.all([savePlannedSchedule({term: run.term, selected}, run.data.request_id), planted]);
       setPhase('saved');
-    } catch {
+      router.push(scheduleUrl('plans', run.term, currentTermOf(terms)));
+    } catch (failure) {
       setPhase('idle');
-      setError('Couldn’t save the plan. Try again.');
+      setError(failure instanceof Error ? failure.message : 'Couldn’t save the plan. Try again.');
     }
   }
 

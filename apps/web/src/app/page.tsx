@@ -8,10 +8,11 @@ import {DayHeads, HourAxis, dayColumn, gridHours} from '@/components/week';
 import {bundleKey, currentTermOf, useBuildingNames, useBundlesFor, useCourseDetails, useTerms, type Meeting} from '@/lib/data/catalog';
 import {usePosts} from '@/lib/data/community';
 import {useCourseRecords} from '@/lib/data/course-records';
-import {removePlannedCourse, usePlannedSchedule} from '@/lib/data/saved-schedules';
+import {removePlannedCourse, usePlannedScheduleState} from '@/lib/data/saved-schedules';
 import {s} from '@/lib/ui/css';
 import {DAY_NAMES, WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
 import {TONES, useCourseTone, type Tone} from '@/lib/ui/palette';
+import {scheduleUrl, scheduleView, type ScheduleView} from '@/lib/schedule-view';
 
 const CSS = `
 button{font:inherit}
@@ -33,7 +34,7 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 `;
 
 const H = 52;
-type View = 'enrolled' | 'plans';
+type View = ScheduleView;
 type Entry = {course_id: string; code: string; name: string; credits: number; section: string; meetings: Meeting[]; tone: Tone};
 
 const TAB = 'height: 34px; padding: 0 14px; border: none; border-radius: 17px; font-size: 14px; cursor: pointer; ';
@@ -43,7 +44,6 @@ const SHEET_ACTION = 'flex: 1; height: 48px; border: none; border-radius: 16px; 
 function Schedule() {
   const params = useSearchParams();
   const router = useRouter();
-  const view: View = params.get('view') === 'plans' ? 'plans' : 'enrolled';
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState(0);
   const busy = useRef(false);
@@ -51,9 +51,11 @@ function Schedule() {
   const terms = useTerms();
   const currentTerm = currentTermOf(terms);
   const term = terms.find((item) => item.id === params.get('term'))?.id ?? currentTerm ?? terms.at(-1)?.id ?? '';
+  const view = scheduleView(params.get('view'), term, currentTerm, terms);
   const termLabel = terms.find((item) => item.id === term)?.label ?? '';
   const records = useCourseRecords();
-  const plan = usePlannedSchedule(term);
+  const planState = usePlannedScheduleState(term);
+  const plan = planState.plan;
   const toneOf = useCourseTone();
   const posts = usePosts();
 
@@ -78,15 +80,9 @@ function Schedule() {
   const buildings = useBuildingNames(entries.flatMap((entry) => entry.meetings.flatMap((meeting) => (meeting.building_id ? [meeting.building_id] : []))));
   const place = (meeting: Meeting) => (meeting.building_id ? buildings[meeting.building_id] ?? meeting.building_id : meeting.mode === 'online_sync' ? 'Online' : '');
 
-  const url = (nextView: View, nextTerm: string) => {
-    const query = new URLSearchParams();
-    if (nextTerm && nextTerm !== currentTerm) query.set('term', nextTerm);
-    if (nextView === 'plans') query.set('view', 'plans');
-    return query.size ? `/?${query}` : '/';
-  };
   const go = (nextView: View, nextTerm: string) => {
     setOpen(false);
-    router.replace(url(nextView, nextTerm), {scroll: false});
+    router.replace(scheduleUrl(nextView, nextTerm, currentTerm), {scroll: false});
   };
 
   const onGrid = (meeting: Meeting) => (WEEKDAYS as string[]).includes(meeting.day);
@@ -132,7 +128,7 @@ function Schedule() {
           <label style={s('position: relative; border: none; background: transparent; padding: 0; display: flex; align-items: center; gap: 4px; color: #1D1B1A; cursor: pointer; min-height: 44px')}>
             <span style={s('font-size: 32px; font-weight: 900; letter-spacing: -0.02em')}>{termLabel || ' '}</span>
             <Svg size={22} sw={2.6} stroke="#6E6863">{ICON.down}</Svg>
-            <select className="dg-native" aria-label={`Change semester, currently ${termLabel}`} value={term} onChange={(event) => go(view, event.target.value)} disabled={!terms.length}>
+            <select className="dg-native" aria-label={`Change semester, currently ${termLabel}`} value={term} onChange={(event) => go(scheduleView(null, event.target.value, currentTerm, terms), event.target.value)} disabled={!terms.length}>
               {[...terms].reverse().map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </label>
@@ -144,7 +140,7 @@ function Schedule() {
         <div style={s('display: flex; align-items: center; justify-content: space-between')}>
           <div role="tablist" aria-label="Schedule view" style={s('display: flex; gap: 6px')}>
             <button type="button" role="tab" aria-selected={view === 'enrolled'} onClick={() => go('enrolled', term)} style={s(TAB + (view === 'enrolled' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Enrolled</button>
-            <button type="button" role="tab" aria-selected={view === 'plans'} onClick={() => go('plans', term)} style={s(TAB + (view === 'plans' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Plans · {plan ? 1 : 0}</button>
+            <button type="button" role="tab" aria-selected={view === 'plans'} onClick={() => go('plans', term)} style={s(TAB + (view === 'plans' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Plans · {planState.loading ? '…' : plan ? 1 : 0}</button>
           </div>
           <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{plural(entries.reduce((total, entry) => total + entry.credits, 0), 'credit')}</span>
         </div>
@@ -197,7 +193,9 @@ function Schedule() {
             ))}
           </div>
         )}
-        {terms.length > 0 && entries.length === 0 && (
+        {view === 'plans' && planState.loading && <EmptyNote role="status">Loading your saved plan…</EmptyNote>}
+        {view === 'plans' && planState.error && <EmptyNote role="alert">{planState.error}</EmptyNote>}
+        {terms.length > 0 && entries.length === 0 && (view !== 'plans' || (!planState.loading && !planState.error)) && (
           <EmptyNote>{view === 'plans' ? `No plan for ${termLabel} yet. Tap DIG to dig one up.` : `No courses for ${termLabel} yet. Tap + to add one.`}</EmptyNote>
         )}
       </main>

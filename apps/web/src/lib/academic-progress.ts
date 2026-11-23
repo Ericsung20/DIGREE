@@ -58,13 +58,17 @@ export function estimateRequirement(group: CatalogRequirement, evidence: CreditE
   const choose = command ? numbers[command] ?? Number(command) : null;
   const plainCredits = (value: string | null | undefined) => value == null || /^\s*\d+(?:\.\d+)?(?:\s+credits?)?\s*$/i.test(value);
   const supportedRows = rows.every(row => {
-    if (row.description || row.references?.length || (row.credit_conditions ?? []).some(value => !plainCredits(value)) || !plainCredits(row.credits)) return false;
+    const courseRow = row.kind === 'course' || row.kind === 'alternative';
+    // The course title is display text, not an additional completion condition.
+    const extraDescription = row.description && (!courseRow || /\b(grade|minimum|maximum|only|must|except|approval|residency|limit)\b/i.test(row.description));
+    if (extraDescription || row.references?.length || (row.credit_conditions ?? []).some(value => !plainCredits(value)) || !plainCredits(row.credits)) return false;
     if (row.kind === 'course' || row.kind === 'alternative') return row.courses?.length === 1 && !row.label;
     return row.kind === 'criterion' && (/^complete (one|two|three|four|five|six|\d+)\s*:?\s*$/i.test(row.label ?? '') || /^total credits$/i.test(row.label ?? ''));
   });
   const simple = options.length > 0 && options.every(row => row.kind === 'course' && row.courses?.length === 1 && !row.references?.length)
-    && rows.every(row => row.kind === 'course' || /^total credits$/i.test(row.label ?? ''));
-  const required = choose ?? (simple ? options.length : null);
+    && rows.every(row => row.kind === 'course' || /^total credits$/i.test(row.label ?? '')
+      || (row.kind === 'condition' && /^Students must complete a minimum of \d+ total credits as detailed below\.?$/i.test(row.label ?? '')));
+  const required = commands.length > 1 ? null : choose ?? (simple ? options.length : null);
   const codes = [...new Set(options.flatMap(row => row.courses?.map(course => course.code) ?? []))];
   const used = new Set<string>();
   const items = codes.map(courseCode => {
@@ -74,8 +78,18 @@ export function estimateRequirement(group: CatalogRequirement, evidence: CreditE
     if (found) used.add(found.course_id);
     return {label: courseCode, courseCode, state: found?.state ?? 'n' as const};
   });
-  const completed = items.filter(item => item.state === 'd').length;
-  const current = items.filter(item => item.state === 'p').length;
+  const slots: string[][] = [];
+  for (const row of options) {
+    const alternatives = row.courses?.map(course => course.code) ?? [];
+    if (row.kind === 'alternative' && slots.length) slots.at(-1)!.push(...alternatives);
+    else slots.push(alternatives);
+  }
+  const slotStates = slots.map(slot => {
+    const matches = items.filter(item => slot.includes(item.courseCode));
+    return matches.some(item => item.state === 'd') ? 'd' : matches.some(item => item.state === 'p') ? 'p' : 'n';
+  });
+  const completed = slotStates.filter(state => state === 'd').length;
+  const current = slotStates.filter(state => state === 'p').length;
   const earned = evidence.filter(row => row.state === 'd' && used.has(row.course_id));
   const minimumCredits = rows.filter(row => row.kind === 'criterion')
     .flatMap(row => [row.credits, ...(row.credit_conditions ?? [])]).filter(value => value != null && plainCredits(value)).map(value => parseFloat(value!));
@@ -91,9 +105,16 @@ export function estimateRequirement(group: CatalogRequirement, evidence: CreditE
     }));
   const complex = !supportedRows || creditReview || overlapReview || /residen|honors|footnote|quality of work/i.test(group.heading)
     || rows.some(row => !!row.references?.length) || commands.length > 1 || required === null || !Number.isFinite(required) || required < 1;
+  // A known course target stays visible even when GPA, overlap or credit details
+  // need checking. "Done" remains reserved for a fully supported evaluation.
+  const hasTarget = options.length > 0 && required !== null && Number.isFinite(required) && required > 0;
+  const conditions = rows.filter(row => row.kind === 'criterion' && !/^total credits$/i.test(row.label ?? '')).length;
+  const summary = hasTarget
+    ? `${Math.min(completed, required)} of ${required}${current ? ` · ${Math.min(current, Math.max(0, required - completed))} now` : ''}`
+    : options.length ? `${completed} matched · see conditions` : conditions ? `${conditions} ${conditions === 1 ? 'requirement' : 'requirements'}` : 'Details';
   return {
     id: group.id,
-    name: group.heading, count: complex ? completed ? `${completed} matched` : 'Review' : `${Math.min(completed, required!)} of ${required}${current ? ` · ${current} now` : ''}`,
+    name: group.heading, count: summary,
     progress: required ? Math.min(1, (completed + current * .5) / required) : 0,
     done: !complex && completed >= required!, review: complex, source_url: group.source_url ?? undefined,
     items: items.length ? items : rows.flatMap(row => row.label ? [{label: `${row.label}${row.credit_conditions?.length ? ` · ${row.credit_conditions.join('; ')}` : ''}`, state: 'n' as const}] : []),

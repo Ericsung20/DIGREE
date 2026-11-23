@@ -49,7 +49,7 @@ test('course-only transfer awards feed degree and requisite evidence without sou
   expect(result.done).toBe(true);
   const review = estimateRequirement(group([{kind: 'course', courses: [{code: 'MATH 240'}], credits: '3'}, {kind: 'condition', label: 'Residency applies.'}]),
     [{course_id: award.equivalent_course_id!, codes: aliases.get('cross240')!, credits: award.credits, state: 'd', transfer: true}]);
-  expect(review.count).toBe('1 matched');
+  expect(review.count).toBe('1 matched · see conditions');
   expect(review.done).toBe(false);
 });
 
@@ -86,6 +86,46 @@ test('an explicit choose-one group accepts a mapped transfer without requiring a
     {kind: 'course', courses: [{code: 'MATH 240'}], credits: '3'}, {kind: 'course', courses: [{code: 'MATH 340'}], credits: '3'}]), evidence);
   expect(result.done).toBe(true);
   expect(result.count).toBe('1 of 1');
+});
+
+test('course titles do not turn a basic course count into manual review', () => {
+  const result = estimateRequirement(group([
+    {kind: 'course', courses: [{code: 'MATH 240'}], description: 'Introduction to Discrete Mathematics', credits: '3'},
+    {kind: 'course', courses: [{code: 'COMP SCI 300'}], description: 'Programming II', credits: '3'},
+    {kind: 'criterion', label: 'Total Credits', credits: '6'},
+  ]), evidence);
+  expect(result.count).toBe('1 of 2');
+  expect(result.review).toBe(false);
+  expect(result.done).toBe(false);
+});
+
+test('a known course target stays numeric with ranges, overlap and extra conditions', () => {
+  const result = estimateRequirement(group([
+    {kind: 'criterion', label: 'Complete two:', credits: '6–8'},
+    {kind: 'course', courses: [{code: 'MATH 240'}], description: 'Discrete Mathematics'},
+    {kind: 'course', courses: [{code: 'COMP SCI 300'}], description: 'Programming II'},
+  ]), evidence, true);
+  expect(result.count).toBe('1 of 2');
+  expect(result.review).toBe(true);
+  expect(result.done).toBe(false);
+  expect(estimateRequirement(group([{kind: 'criterion', label: 'Residency', description: '30 credits on campus.'}]), []).count).toBe('1 requirement');
+});
+
+test('two completed alternatives occupy one requirement slot', () => {
+  const result = estimateRequirement(group([
+    {kind: 'criterion', label: 'Complete two:', credits: '6-8'},
+    {kind: 'course', courses: [{code: 'COMP SCI 536'}]},
+    {kind: 'alternative', courses: [{code: 'COMP SCI 538'}]},
+    {kind: 'course', courses: [{code: 'COMP SCI 537'}]},
+  ]), [536, 538].map(number => ({course_id: String(number), codes: [`COMP SCI ${number}`], credits: 3, state: 'd'})));
+  expect(result.count).toBe('1 of 2');
+  expect(result.done).toBe(false);
+});
+
+test('a prose-only honors condition does not invent a countable course checklist', () => {
+  const result = estimateRequirement(group([{kind: 'condition', label: 'Complete one course taken for Honors with a grade of B or higher.'}], 'Honors in the Major'), []);
+  expect(result.count).toBe('Details');
+  expect(result.done).toBe(false);
 });
 
 test.each([

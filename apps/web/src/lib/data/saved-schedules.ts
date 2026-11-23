@@ -7,6 +7,10 @@ export type PlannedSchedule = {term: string; selected: components['schemas']['Se
 const KEY = 'digree.planned';
 const termKey = (term: string) => `${KEY}:${term}`;
 type StoredPlan = PlannedSchedule & {id?: string};
+type PlanState = {plan: StoredPlan | null; loading: boolean; error: string | null};
+const LOADING: PlanState = {plan: null, loading: true, error: null};
+const stateKey = (term: string) => `${termKey(term)}:state`;
+const cachePlan = (term: string, plan: StoredPlan | null) => setRemote<PlanState>(stateKey(term), {plan, loading: false, error: null});
 type Selected = PlannedSchedule['selected'][number];
 type ScheduleItem = Pick<Selected, 'course_id' | 'bundle_id' | 'credits'> & {
   section_bundles: {courses: {code: string} | null; meetings: Selected['meetings']} | null;
@@ -33,13 +37,23 @@ async function loadPlan(term: string): Promise<StoredPlan | null> {
   return {id: data.id, term: data.term, selected: readScheduleItems(data.saved_schedule_items)};
 }
 
-export const usePlannedSchedule: (term: string) => StoredPlan | null = IS_MOCK
+export const usePlannedScheduleState: (term: string) => PlanState = IS_MOCK
   ? (term) => {
     const legacy = useStore<StoredPlan | null>(KEY, null);
     const plan = useStore<StoredPlan | null>(termKey(term), null);
-    return plan ?? (legacy?.term === term ? legacy : null);
+    return {plan: plan ?? (legacy?.term === term ? legacy : null), loading: false, error: null};
   }
-  : (term) => useRemote(termKey(term), null, () => term ? loadPlan(term) : Promise.resolve(null));
+  : (term) => useRemote(stateKey(term), LOADING, async () => {
+    try {
+      return {plan: term ? await loadPlan(term) : null, loading: false, error: null};
+    } catch {
+      return {plan: null, loading: false, error: 'Couldn’t load your saved plan. Reload to try again.'};
+    }
+  });
+
+export function usePlannedSchedule(term: string): StoredPlan | null {
+  return usePlannedScheduleState(term).plan;
+}
 
 export async function savePlannedSchedule(plan: PlannedSchedule, requestId: string): Promise<void> {
   if (IS_MOCK) return writeStore(termKey(plan.term), plan);
@@ -49,7 +63,8 @@ export async function savePlannedSchedule(plan: PlannedSchedule, requestId: stri
   const items = plan.selected.map(({course_id, bundle_id, credits}) => ({course_id, bundle_id, credits}));
   const {data: id, error} = await db.rpc('save_schedule', {p_term: plan.term, p_items: items, p_request_id: requestId});
   if (error) throw error;
-  setRemote(termKey(plan.term), {...plan, id});
+  if (typeof id !== 'string' || !id) throw new Error('The plan could not be confirmed as saved. Try again.');
+  cachePlan(plan.term, {...plan, id});
 }
 
 export async function deletePlannedSchedule(plan: StoredPlan): Promise<void> {
@@ -60,7 +75,7 @@ export async function deletePlannedSchedule(plan: StoredPlan): Promise<void> {
   if (!plan.id) return;
   const {error} = await supabase().from('saved_schedules').delete().eq('id', plan.id);
   if (error) throw error;
-  setRemote(termKey(plan.term), null);
+  cachePlan(plan.term, null);
 }
 
 export async function removePlannedCourse(plan: StoredPlan, courseId: string): Promise<void> {
@@ -71,5 +86,5 @@ export async function removePlannedCourse(plan: StoredPlan, courseId: string): P
   if (!plan.id) return;
   const {error} = await supabase().from('saved_schedule_items').delete().eq('schedule_id', plan.id).eq('course_id', courseId);
   if (error) throw error;
-  setRemote(termKey(plan.term), {...plan, selected});
+  cachePlan(plan.term, {...plan, selected});
 }
