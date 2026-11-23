@@ -34,7 +34,7 @@ GRADE_PRIOR_RATE = 0.5
 GRADE_PRIOR_STRENGTH = 50
 
 SHAPE_FACTORS = ("walking", "idle_gap", "campus_days")
-DATA_FACTORS = ("grade_outcomes", "degree_fit", "instructor", "breadth", "major_balance")
+DATA_FACTORS = ("grade_outcomes", "degree_fit", "instructor", "breadth", "major_balance", "known_easy")
 
 
 def major_balance_component(count: int) -> float:

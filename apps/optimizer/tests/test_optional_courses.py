@@ -413,3 +413,61 @@ def test_distinct_course_sets_return_one_result_when_only_sections_differ():
     payload = request([_two_sections("req", "MON"), _two_sections("other", "TUE")])
     assert len(run(payload).results) == 4
     assert len(run(payload, SearchLimits(distinct_course_sets=True)).results) == 1
+
+
+def _graded(course_id: str, day: str, rate: float) -> dict:
+    return optional(course_id, day, grade_stats={"a_ab_rate": rate, "sample_size": 1000})
+
+
+def test_distinct_course_sets_spread_results_across_different_courses():
+    from app.config import SearchLimits
+
+    # Two courses must be added. By grades alone the best sets all keep "a".
+    payload = request(
+        [required(), _graded("a", "TUE", 0.95), _graded("b", "WED", 0.9), _graded("c", "THU", 0.6), _graded("d", "FRI", 0.55)],
+        min_credits=9, max_credits=9, weights={"grade_outcomes": 1}, top_k=2,
+    )
+    results = run(payload, SearchLimits(distinct_course_sets=True)).results
+    assert [course_ids(r) for r in results] == [["req", "a", "b"], ["req", "c", "d"]]
+    assert [r.rank for r in results] == [1, 2]
+
+
+def test_distinct_course_sets_fall_back_to_the_least_shared_set():
+    from app.config import SearchLimits
+
+    # Only three courses to add two from: every pair shares one with the best pair.
+    payload = request(
+        [required(), _graded("a", "TUE", 0.95), _graded("b", "WED", 0.9), _graded("c", "THU", 0.6)],
+        min_credits=9, max_credits=9, weights={"grade_outcomes": 1}, top_k=3,
+    )
+    results = run(payload, SearchLimits(distinct_course_sets=True)).results
+    assert [course_ids(r) for r in results] == [["req", "a", "b"], ["req", "a", "c"], ["req", "b", "c"]]
+
+
+def test_without_distinct_course_sets_results_stay_in_score_order():
+    payload = request(
+        [required(), _graded("a", "TUE", 0.95), _graded("b", "WED", 0.9), _graded("c", "THU", 0.6), _graded("d", "FRI", 0.55)],
+        min_credits=9, max_credits=9, weights={"grade_outcomes": 1}, top_k=2,
+    )
+    assert [course_ids(r) for r in run(payload).results] == [["req", "a", "b"], ["req", "a", "c"]]
+
+
+def test_known_easy_courses_rank_first_when_weighted():
+    payload = request(
+        [required(), _graded("a", "TUE", 0.6), optional("easy", "WED", known_easy=1.0, grade_stats={"a_ab_rate": 0.6, "sample_size": 1000})],
+        min_credits=6, max_credits=6, weights={"grade_outcomes": 1, "known_easy": 1},
+    )
+    assert [course_ids(r) for r in run(payload).results] == [["req", "easy"], ["req", "a"]]
+    # Without the weight, the tie falls back to course order.
+    payload["preferences"]["weights"]["known_easy"] = 0
+    assert [course_ids(r) for r in run(payload).results][0] == ["req", "a"]
+
+
+def test_prefer_max_credits_ranks_the_credit_target_before_the_score():
+    payload = request(
+        [required(), _graded("best", "TUE", 0.95), optional("four", "WED", credits=(4,), grade_stats={"a_ab_rate": 0.3, "sample_size": 1000})],
+        min_credits=6, max_credits=7, weights={"grade_outcomes": 1},
+    )
+    assert [r.metrics.total_credits for r in run(payload).results] == [6, 7]
+    payload["preferences"]["prefer_max_credits"] = True
+    assert [r.metrics.total_credits for r in run(payload).results] == [7, 6]

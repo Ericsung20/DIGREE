@@ -67,6 +67,7 @@ class CandidateCourse(ContractModel):
     already_completed: bool
     repeatable: bool
     requirement_fit: float | None = Field(default=None, ge=0, le=1)
+    known_easy: float = Field(default=0, ge=0, le=1)
     breadth: list[Annotated[str, Field(min_length=1)]] | None = None
     grade_stats: GradeStats | None = None
     section_bundles: list[SectionBundle]
@@ -109,6 +110,7 @@ class Weights(ContractModel):
     instructor: Weight
     breadth: Weight = 0
     major_balance: Weight = 0
+    known_easy: Weight = 0
 
     @model_validator(mode="after")
     def _not_all_zero(self) -> "Weights":
@@ -121,6 +123,7 @@ class Preferences(ContractModel):
     weights: Weights
     preferred_breadths: list[Annotated[str, Field(min_length=1)]] = Field(default_factory=list, max_length=16)
     catalog_search: bool = False
+    prefer_max_credits: bool = False
 
     @model_validator(mode="after")
     def _valid_breadths(self) -> "Preferences":

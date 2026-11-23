@@ -56,7 +56,7 @@ Optional environment variables bound the search and choose how results are picke
 |---|---|---|---|
 | `DIGREE_MAX_SEARCH_STEPS` | `100000` | 1 to 10,000,000 | Search steps per request before the search stops |
 | `DIGREE_MAX_OPTIONAL_COURSES` | `20` | 1 to 200 | Optional courses considered per request |
-| `DIGREE_DISTINCT_COURSE_SETS` | `0` | `1` or `0` | `1`: no two results share the same set of courses; each set keeps its best-ranked sections. The DIG web app expects `1`. Leave it `0` to match `fixtures/expected.json`. |
+| `DIGREE_DISTINCT_COURSE_SETS` | `0` | `1` or `0` | `1`: no two results share the same set of courses; each set keeps its best-ranked sections. Results are also spread out: after the best one, each next result shares fewer than half of its added courses with the ones before it, when the 20 best sets per result allow it. The DIG web app expects `1`. Leave it `0` to match `fixtures/expected.json`. |
 
 A step is one section placement or one schedule evaluation. Limits count steps, not seconds, so the same request and limits give the same response on any machine. At the default, the slowest request measured took under one second.
 
@@ -161,7 +161,7 @@ Every schedule holds **all required courses**, each with one section bundle and 
 
 **Optional courses** (`is_required: false`) are added only when the required courses cannot reach the credit range on their own, that is, when no combination of their credit options lands inside `min_credits..max_credits`. Then every set of usable optional courses whose total lands inside the range is a candidate: with 9 required credits and a 12-18 range, schedules of 12, 15 and 18 credits are all eligible. When the required courses already fit the range, optional courses are not considered at all.
 
-When `preferred_breadths` and a positive `weights.breadth` are supplied, optional courses matching **any** selected tag get priority in the bounded candidate pool and a higher score. The tags include breadth and Gen Ed designations; courses matching none remain eligible. The caller sends designation tags in each candidate course's `breadth` field; null means the tags are unknown. `constraints.max_major_courses`, when set from 0 to 6, is a hard cap on all selected courses with `is_major_course=true`, including must-takes. A positive `weights.major_balance` gently favors schedules with 2–4 major courses where possible; zero is neutral.
+When `preferred_breadths` and a positive `weights.breadth` are supplied, optional courses matching **any** selected tag get priority in the bounded candidate pool and a higher score. The tags include breadth and Gen Ed designations; courses matching none remain eligible. The caller sends designation tags in each candidate course's `breadth` field; null means the tags are unknown. `constraints.max_major_courses`, when set from 0 to 6, is a hard cap on all selected courses with `is_major_course=true`, including must-takes. A positive `weights.major_balance` gently favors schedules with 2–4 major courses where possible; zero is neutral. A positive `weights.known_easy` favors schedules whose added courses carry a higher `known_easy` (0 to 1: how strongly students recommend the course as easy). With `preferences.prefer_max_credits`, schedules closer to `max_credits` rank first and the score decides between equal totals.
 
 An optional course is usable unless it is `ineligible`, `already_completed` and not `repeatable`, or has no section bundles. One with `eligibility_status: unknown` is usable, and a schedule containing it is `needs_review`.
 
