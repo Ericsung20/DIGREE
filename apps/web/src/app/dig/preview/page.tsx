@@ -8,10 +8,10 @@ import {DayHeads, HourAxis, dayColumn, gridHours} from '@/components/week';
 import {currentTermOf, useBuildingNames, useTerms} from '@/lib/data/catalog';
 import {digTerm, useDigRun} from '@/lib/data/dig-session';
 import {savePlannedSchedule} from '@/lib/data/saved-schedules';
-import {campusDays, describeOptions, sectionClash} from '@/lib/dig-view';
+import {campusDays, describeOptions} from '@/lib/dig-view';
 import {IS_MOCK} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
-import {DAY_SHORT, WEEKDAYS, dayIndex, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
+import {WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
 import {DIG_TONES} from '@/lib/ui/palette';
 
 const CSS = `
@@ -29,6 +29,8 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 
 const H = 48;
 const sectionTimes = (meetings: Parameters<typeof meetingSummary>[0]) => meetings.length ? meetingSummary(meetings, ' ') : 'Online, no set time';
+const hoursBetween = (minutes: number) => (minutes < 60 ? `${minutes} min` : `${Math.round(minutes / 30) / 2} h`);
+const ROUND = (on: boolean) => `width: 44px; height: 44px; flex-shrink: 0; border: none; border-radius: 22px; display: flex; align-items: center; justify-content: center; cursor: ${on ? 'pointer' : 'default'}; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: #ECE8E3; color: #A59D94'}`;
 const PLANTING_MS = 900; // the spade digs for at least this long before the button says "Planted"
 type Phase = 'idle' | 'planting' | 'saved';
 
@@ -40,8 +42,8 @@ function SchedulePreview() {
   const term = run?.term ?? digTerm(terms, params.get('term'));
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
-  // Sections the student switched to, by course, for the option on screen.
-  const [picks, setPicks] = useState<{rank: number | null; bundles: Record<string, string>}>({rank: null, bundles: {}});
+  // Which timetable of the option on screen is shown: 0 is DIG's pick.
+  const [shown, setShown] = useState<{rank: number | null; index: number}>({rank: null, index: 0});
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
@@ -64,16 +66,19 @@ function SchedulePreview() {
   const order = [...required, ...results.flatMap((result) => result.selected.map((entry) => entry.course_id))].filter((id, i, all) => all.indexOf(id) === i);
   const tone = (courseId: string) => DIG_TONES[order.indexOf(courseId) % DIG_TONES.length];
   const choices = run?.data?.sections ?? {};
-  const picked = picks.rank === option?.rank ? picks.bundles : {};
-  const selected = (option?.result.selected ?? []).map((entry) => {
-    const other = choices[entry.course_id]?.find((section) => section.bundle_id === picked[entry.course_id]);
+  const pages = option ? run?.data?.timetables?.[option.rank] : undefined;
+  const timetables = pages?.options ?? [];
+  const index = shown.rank === option?.rank ? Math.min(shown.index, Math.max(0, timetables.length - 1)) : 0;
+  const timetable = timetables[index];
+  const selected = (option?.result.selected ?? []).map((entry, i) => {
+    const id = timetable?.bundles[i];
+    const other = id && id !== entry.bundle_id ? choices[entry.course_id]?.find((section) => section.bundle_id === id) : undefined;
     return other ? {...entry, bundle_id: other.bundle_id, meetings: other.meetings} : entry;
   });
-  const changed = selected.some((entry, i) => entry.bundle_id !== option?.result.selected[i]?.bundle_id);
-  const clash = sectionClash(selected);
-  const pick = (courseId: string, bundleId: string) => {
-    if (!option) return;
-    setPicks({rank: option.rank, bundles: {...picked, [courseId]: bundleId}});
+  const walkText = index === 0 || !timetable ? (option?.walk ? `${option.walk} max walk` : 'walking time unverified') : timetable.maxWalk === null ? 'walking time unverified' : `${timetable.maxWalk} min max walk`;
+  const go = (next: number) => {
+    if (!option || next < 0 || next >= timetables.length) return;
+    setShown({rank: option.rank, index: next});
     setPhase('idle');
     setError(null);
   };
@@ -83,7 +88,7 @@ function SchedulePreview() {
   const currentLabel = terms.find((item) => item.id === currentTermOf(terms))?.label;
 
   async function save() {
-    if (phase !== 'idle' || !run?.data || !option || clash) return;
+    if (phase !== 'idle' || !run?.data || !option) return;
     if (run.data.sample && !IS_MOCK) return setError('Sample results can’t be saved to your account.');
     setPhase('planting');
     setError(null);
@@ -109,7 +114,7 @@ function SchedulePreview() {
         </div>
         <div style={s('padding-left: 10px; display: flex; flex-direction: column; gap: 4px')}>
           <h1 style={s('margin: 0; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>{run ? `${run.termLabel} plan` : ' '}</h1>
-          <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{option ? `${plural(option.credits, 'credit')} · ${campusDays({...option.result, selected})} · ${changed ? 'walks not rechecked' : option.walk ? `${option.walk} max walk` : 'walking time unverified'}` : ' '}</span>
+          <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{option ? `${plural(option.credits, 'credit')} · ${campusDays({...option.result, selected})} · ${walkText}` : ' '}</span>
         </div>
       </header>
 
@@ -139,42 +144,34 @@ function SchedulePreview() {
         </div>
 
         {selected.length > 0 && (
-          <section aria-label="Sections" style={s('margin: 6px 0 0 8px; display: flex; flex-direction: column; gap: 8px')}>
-            <div style={s('display: flex; align-items: baseline; justify-content: space-between; padding: 0 4px')}>
-              <h2 style={s('margin: 0; font-size: 15px; font-weight: 900')}>Sections</h2>
-              {changed && <button type="button" onClick={() => setPicks({rank: null, bundles: {}})} style={s('border: none; background: transparent; color: #8C1D2B; font-size: 13px; font-weight: 800; cursor: pointer; padding: 4px')}>Reset to DIG’s pick</button>}
-            </div>
+          <section aria-label="Timetables" style={s('margin: 6px 0 0 8px; display: flex; flex-direction: column; gap: 8px')}>
+            {timetables.length > 1 && (
+              <div style={s('height: 56px; padding: 0 6px; border-radius: 20px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06); display: flex; align-items: center; gap: 8px')}>
+                <button type="button" className="press" aria-label="Previous timetable" disabled={index === 0} onClick={() => go(index - 1)} style={s(ROUND(index > 0))}><Svg size={20} sw={2.8}><path d="m15 18-6-6 6-6" /></Svg></button>
+                <div aria-live="polite" style={s('flex: 1; display: flex; flex-direction: column; align-items: center')}>
+                  <span style={s('font-size: 15px; font-weight: 900')}>Timetable {index + 1} of {timetables.length}</span>
+                  <span style={s('font-size: 12px; font-weight: 700; color: #6E6863')}>{index === 0 ? 'DIG’s pick' : `${plural(timetable.campusDays, 'day')} on campus · ${hoursBetween(timetable.idleMinutes)} between classes`}</span>
+                </div>
+                <button type="button" className="press" aria-label="Next timetable" disabled={index >= timetables.length - 1} onClick={() => go(index + 1)} style={s(ROUND(index < timetables.length - 1))}><Svg size={20} sw={2.8}>{ICON.right}</Svg></button>
+              </div>
+            )}
+            {timetables.length === 1 && <span style={s('padding: 0 4px; font-size: 13px; font-weight: 700; color: #6E6863')}>This is the only timetable these courses fit into.</span>}
             {selected.map((entry) => {
-              const list = choices[entry.course_id] ?? [];
               const c = tone(entry.course_id);
-              const original = option?.result.selected.find((item) => item.course_id === entry.course_id)?.bundle_id;
-              const times = sectionTimes(entry.meetings);
               return (
-                <div key={entry.course_id} style={s('min-height: 58px; padding: 8px 8px 8px 14px; box-sizing: border-box; border-radius: 18px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06); display: flex; align-items: center; gap: 10px')}>
+                <div key={entry.course_id} style={s('min-height: 46px; padding: 8px 14px; box-sizing: border-box; border-radius: 16px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06); display: flex; align-items: center; gap: 10px')}>
                   <span aria-hidden="true" style={s(`width: 12px; height: 12px; border-radius: 6px; flex-shrink: 0; background: ${c.bg}; border: 1.5px solid ${c.fg}`)} />
-                  <span style={s('flex-shrink: 0; font-size: 15px; font-weight: 900')}>{shortCode(entry.course_code)}</span>
-                  {list.length > 1 ? (
-                    <label className="press" style={s('position: relative; flex: 1; min-width: 0; height: 42px; padding: 0 10px 0 12px; border-radius: 14px; background: #F1EEEA; display: flex; align-items: center; gap: 6px; cursor: pointer')}>
-                      <span style={s('flex: 1; min-width: 0; font-size: 13px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{times}</span>
-                      <span style={s('flex-shrink: 0; font-size: 12px; font-weight: 800; color: #6E6863')}>{list.findIndex((section) => section.bundle_id === entry.bundle_id) + 1}/{list.length}</span>
-                      <Svg size={14} sw={2.8}>{ICON.down}</Svg>
-                      <select className="dg-native" aria-label={`${entry.course_code} section, ${times}`} value={entry.bundle_id} onChange={(event) => pick(entry.course_id, event.target.value)}>
-                        {list.map((section) => <option key={section.bundle_id} value={section.bundle_id}>{sectionTimes(section.meetings)}{section.bundle_id === original ? ' · DIG’s pick' : ''}{section.seat_status === 'full' ? ' · Full' : ''}</option>)}
-                      </select>
-                    </label>
-                  ) : (
-                    <span style={s('flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: #5F5A55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{times} · only section that fits</span>
-                  )}
+                  <span style={s('flex-shrink: 0; font-size: 14px; font-weight: 900')}>{shortCode(entry.course_code)}</span>
+                  <span style={s('flex: 1; min-width: 0; text-align: right; font-size: 13px; font-weight: 700; color: #5F5A55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{sectionTimes(entry.meetings)}</span>
                 </div>
               );
             })}
-            {clash && <span role="alert" style={s('display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 14px; background: #FCEFD2; color: #6B4500; font-size: 13px; font-weight: 800')}><Svg size={16} sw={2.4} style={s('flex-shrink: 0')}>{ICON.warn}</Svg>{shortCode(clash.codes[0])} and {shortCode(clash.codes[1])} overlap on {DAY_SHORT[dayIndex(clash.day)]}. Pick another section to save.</span>}
           </section>
         )}
       </main>
 
       <div style={s('flex-shrink: 0; padding: 10px 20px 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; background: #FFFFFF; border-radius: 28px 28px 0 0; box-shadow: 0 -6px 24px rgba(40,20,20,0.06)')}>
-        <button type="button" onClick={() => void save()} aria-live="polite" aria-disabled={!!clash} style={s(`height: 58px; border: none; border-radius: 29px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 900; overflow: hidden; white-space: nowrap; transition: width 380ms cubic-bezier(.2,.9,.25,1.1), background 300ms ease, box-shadow 300ms ease; cursor: ${phase === 'idle' && !clash ? 'pointer' : 'default'}; ${phase === 'idle' ? `width: 100%; background: ${clash ? '#B9AFA6' : '#8C1D2B'}; color: #FFFFFF; box-shadow: ${clash ? 'none' : '0 8px 20px rgba(140,29,43,0.30)'}` : phase === 'planting' ? 'width: 58px; background: #8C1D2B; color: #FFFFFF; box-shadow: 0 4px 12px rgba(140,29,43,0.30)' : 'width: 100%; background: #1D1B1A; color: #FFFFFF; box-shadow: none'}`)}>
+        <button type="button" onClick={() => void save()} aria-live="polite" style={s(`height: 58px; border: none; border-radius: 29px; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 900; overflow: hidden; white-space: nowrap; transition: width 380ms cubic-bezier(.2,.9,.25,1.1), background 300ms ease, box-shadow 300ms ease; cursor: ${phase === 'idle' ? 'pointer' : 'default'}; ${phase === 'idle' ? 'width: 100%; background: #8C1D2B; color: #FFFFFF; box-shadow: 0 8px 20px rgba(140,29,43,0.30)' : phase === 'planting' ? 'width: 58px; background: #8C1D2B; color: #FFFFFF; box-shadow: 0 4px 12px rgba(140,29,43,0.30)' : 'width: 100%; background: #1D1B1A; color: #FFFFFF; box-shadow: none'}`)}>
           {phase === 'idle' && <span style={s('display: flex; align-items: center; gap: 10px')}><Spade fill="#FFFFFF" style="height: 24px; width: 9px" />Save Plan</span>}
           {phase === 'planting' && <Spade className="digging" label="Saving" fill="#FFFFFF" style="height: 28px; width: 11px" />}
           {phase === 'saved' && <span className="pop" style={s('display: flex; align-items: center; gap: 8px')}><Svg size={20} sw={3}>{ICON.check}</Svg>Planted in Plans</span>}

@@ -1,7 +1,7 @@
 import {expect, test} from 'vitest';
 import expected from '../mocks/expected.json';
 import request from '../mocks/request.json';
-import {DEFAULT_CONDITIONS, blockers, conditionsChip, describeOptions, loosenChoices, sectionChoices, sectionClash, toDigBody, walkChecks, type DigResponse} from './dig-view';
+import {DEFAULT_CONDITIONS, blockers, conditionsChip, describeOptions, allTimetables, loosenChoices, sectionChoices, toDigBody, walkChecks, type DigResponse} from './dig-view';
 import type {GenerateRequest} from './dig-request';
 import {parseDigInputs} from './dig-request';
 
@@ -54,10 +54,63 @@ test('sectionChoices offers every section of the chosen courses that keeps to th
   expect(Object.values(noMonday).flat().some((section) => section.meetings.some((meeting) => meeting.day === 'MON'))).toBe(false);
 });
 
-test('sectionClash names the first two courses that meet at the same time', () => {
-  const at = (day: 'MON' | 'TUE', start: number, end: number) => ({day, start_min: start, end_min: end, mode: 'in_person' as const, building_id: null});
-  expect(sectionClash([{course_code: 'A 1', meetings: [at('MON', 600, 650)]}, {course_code: 'B 2', meetings: [at('MON', 650, 700)]}])).toBeNull();
-  expect(sectionClash([{course_code: 'A 1', meetings: [at('MON', 600, 650)]}, {course_code: 'B 2', meetings: [at('TUE', 600, 650), at('MON', 640, 700)]}])).toEqual({codes: ['A 1', 'B 2'], day: 'MON'});
+test('allTimetables lists every timetable for the courses, DIG’s pick first, without clashes or impossible walks', () => {
+  const m = (day: 'MON' | 'TUE' | 'WED', start: number, end: number, building: string) => ({day, start_min: start, end_min: end, mode: 'in_person' as const, building_id: building});
+  const section = (bundle_id: string, ...meetings: ReturnType<typeof m>[]) => ({bundle_id, seat_status: 'open' as const, instructor_score: null, meetings});
+  const req = {
+    constraints: {...(request as GenerateRequest).constraints, earliest_start_min: 480, latest_end_min: 1320, blocked_days: [], walking_buffer_min: 3},
+    walking_edges: [{from_building_id: 'X', to_building_id: 'Z', minutes: 10, bidirectional: true}],
+    courses: [
+      {...(request as GenerateRequest).courses[0], course_id: 'a', section_bundles: [section('A1', m('MON', 600, 650, 'X')), section('A2', m('MON', 700, 750, 'X')), section('A3', m('TUE', 600, 650, 'Y'))]},
+      {...(request as GenerateRequest).courses[0], course_id: 'b', section_bundles: [section('B1', m('MON', 600, 650, 'Z')), section('B2', m('MON', 655, 705, 'Z')), section('B3', m('WED', 600, 650, 'Z'))]},
+    ],
+  };
+  const result = {...response.results[0], selected: [
+    {course_id: 'a', course_code: 'A 1', bundle_id: 'A1', credits: 3, meetings: [m('MON', 600, 650, 'X')]},
+    {course_id: 'b', course_code: 'B 2', bundle_id: 'B3', credits: 3, meetings: [m('WED', 600, 650, 'Z')]},
+  ]};
+  const {options, more} = allTimetables(result, req);
+  // A1+B1 and A2+B2 overlap; A1+B2 leaves 5 minutes for a 10-minute walk.
+  expect(options.map((option) => option.bundles.join('+'))).toEqual(['A1+B3', 'A2+B1', 'A2+B3', 'A3+B1', 'A3+B2', 'A3+B3']);
+  expect(more).toBe(false);
+  expect(options[1]).toMatchObject({campusDays: 1, maxWalk: 10, idleMinutes: 40});
+  expect(options.find((option) => option.bundles.join('+') === 'A3+B2')?.maxWalk).toBe(0); // different days, no walk
+  const short = allTimetables(result, req, 2);
+  expect(short.options.map((option) => option.bundles.join('+'))).toEqual(['A1+B3', 'A2+B1']);
+  expect(short.more).toBe(true);
+});
+
+test('allTimetables skips sections that clash with themselves or are full, counts same-time sections once, and stops at 20', () => {
+  const m = (day: 'MON' | 'TUE' | 'WED' | 'THU' | 'FRI', start: number, end: number) => ({day, start_min: start, end_min: end, mode: 'in_person' as const, building_id: 'X'});
+  const section = (bundle_id: string, meetings: ReturnType<typeof m>[], seat_status: 'open' | 'full' = 'open') => ({bundle_id, seat_status, instructor_score: null, meetings});
+  const base = (request as GenerateRequest).courses[0];
+  const req = {
+    constraints: {...(request as GenerateRequest).constraints, earliest_start_min: 480, latest_end_min: 1320, blocked_days: [], walking_buffer_min: 0, exclude_full_sections: true},
+    walking_edges: [],
+    courses: [
+      {...base, course_id: 'a', section_bundles: [
+        section('A1', [m('MON', 600, 650)]),
+        section('A2', [m('TUE', 600, 690), m('TUE', 660, 710)]), // lecture and quiz overlap
+        section('A3', [m('WED', 600, 650)], 'full'),
+        section('A4', [m('MON', 600, 650)]), // same times as A1, another room
+        section('A5', [m('THU', 600, 650)]),
+      ]},
+    ],
+  };
+  const result = {...response.results[0], selected: [{course_id: 'a', course_code: 'A 1', bundle_id: 'A1', credits: 3, meetings: [m('MON', 600, 650)]}]};
+  expect(allTimetables(result, req).options.map((option) => option.bundles.join('+'))).toEqual(['A1', 'A5']);
+
+  // Two courses with 6 distinct times each: 36 timetables, of which the best 20 are kept.
+  const times = (prefix: string, day: 'MON' | 'TUE') => Array.from({length: 6}, (_, i) => section(`${prefix}${i}`, [m(day, 480 + i * 60, 530 + i * 60)]));
+  const wide = {...req, courses: [{...base, course_id: 'a', section_bundles: times('A', 'MON')}, {...base, course_id: 'b', section_bundles: times('B', 'TUE')}]};
+  const pick = {...response.results[0], selected: [
+    {course_id: 'a', course_code: 'A 1', bundle_id: 'A0', credits: 3, meetings: [m('MON', 480, 530)]},
+    {course_id: 'b', course_code: 'B 1', bundle_id: 'B0', credits: 3, meetings: [m('TUE', 480, 530)]},
+  ]};
+  const {options, more} = allTimetables(pick, wide);
+  expect(options).toHaveLength(20);
+  expect(options[0].bundles).toEqual(['A0', 'B0']);
+  expect(more).toBe(true);
 });
 
 test('walkChecks finds the longest single walk and matches the optimizer’s weekly totals', () => {
@@ -86,6 +139,10 @@ test('describeOptions labels the cards and picks one thing to check', () => {
   expect(describeOptions(withWalks, onTarget, ['cs400'], String)[0].added).toEqual(['MATH 234', 'STAT 240']);
   expect(describeOptions(withWalks, {...onTarget, credits: 12}, required, String)[0].check).toBe('2 credits under your target');
 
+  const unconfirmed = {...withWalks, results: withWalks.results.map((result) => ({...result, warnings: [...result.warnings, 'eligibility_unknown: Eligibility for MATH 234 has not been confirmed; check it before enrolling.']}))};
+  expect(describeOptions(unconfirmed, onTarget, ['cs400'], String)[0].check).toBe('Check the requisites for MATH 234');
+  expect(describeOptions(unconfirmed, onTarget, required, String)[0].check).toBeNull(); // a must-take is not flagged
+
   const unverified = describeOptions({...response, walks: walkChecks(response.results, [])}, onTarget, required, (id) => `${id} Hall`);
   expect(unverified[1]).toMatchObject({walk: null, check: 'No walking data for BETA Hall'});
 });
@@ -96,11 +153,14 @@ test('an empty result explains itself and offers ways to loosen the conditions',
     'Some sections meet on Fri.',
   ]);
   const choices = loosenChoices(DEFAULT_CONDITIONS, 7);
-  expect(choices.map((choice) => choice.label)).toEqual(['End by 5:30 PM', 'Allow Friday', 'Start at 8 AM']);
-  expect(choices[0].apply(DEFAULT_CONDITIONS).latest).toBe(1050);
-  expect(choices[1].apply(DEFAULT_CONDITIONS).days).toEqual([true, true, true, true, true]);
+  // Least important first: days, then hours, then credits, then online classes.
+  expect(choices.map((choice) => choice.label)).toEqual(['Allow Friday', 'End by 5:30 PM', 'Start at 8 AM']);
+  expect(choices[0].apply(DEFAULT_CONDITIONS).days).toEqual([true, true, true, true, true]);
+  expect(choices[1].apply(DEFAULT_CONDITIONS).latest).toBe(1050);
   expect(choices[2].apply(DEFAULT_CONDITIONS).earliest).toBe(480);
-  expect(loosenChoices({...DEFAULT_CONDITIONS, online: false}, 7).map((choice) => choice.label)).toContain('Allow online classes');
+  const allDays = {...DEFAULT_CONDITIONS, days: [true, true, true, true, true]};
+  expect(loosenChoices({...allDays, online: false, credits: 8}, 7).map((choice) => choice.label)).toEqual(['End by 5:30 PM', 'Start at 8 AM', 'Aim for 7 credits']);
+  expect(loosenChoices({...allDays, online: false, credits: 7, earliest: 420}, 7).map((choice) => choice.label)).toEqual(['End by 5:30 PM', 'Allow online classes']);
   // The end of the day goes as late as 10 PM.
-  expect(loosenChoices({...DEFAULT_CONDITIONS, latest: 1260}, 7)[0].apply(DEFAULT_CONDITIONS).latest).toBe(1320);
+  expect(loosenChoices({...allDays, latest: 1260}, 7)[0].apply(DEFAULT_CONDITIONS).latest).toBe(1320);
 });

@@ -103,7 +103,7 @@ export function walkChecks(results: S['ScheduleResult'][], edges: S['WalkingEdge
 }
 
 /** `sample` marks results that come from the shared fixture rather than the signed-in user's courses. */
-export type DigResponse = S['GenerateResponse'] & {walks?: WalkCheck[]; sample?: boolean; sections?: SectionChoices};
+export type DigResponse = S['GenerateResponse'] & {walks?: WalkCheck[]; sample?: boolean; sections?: SectionChoices; timetables?: Timetables};
 
 /** One section a result's course could switch to on the Schedule Preview. */
 export type SectionChoice = {bundle_id: string; seat_status: S['SectionBundle']['seat_status']; meetings: S['Meeting'][]};
@@ -128,17 +128,108 @@ export function sectionChoices(results: S['ScheduleResult'][], request: Pick<S['
   return choices;
 }
 
-/** The first pair of selected courses that meet at the same time, or null when nothing overlaps. */
-export function sectionClash(selected: Pick<S['SelectedBundle'], 'course_code' | 'meetings'>[]): {codes: [string, string]; day: Day} | null {
-  for (let i = 0; i < selected.length; i++) {
-    for (let j = i + 1; j < selected.length; j++) {
-      for (const a of selected[i].meetings) {
-        const b = selected[j].meetings.find((meeting) => meeting.day === a.day && meeting.start_min < a.end_min && a.start_min < meeting.end_min);
-        if (b) return {codes: [selected[i].course_code, selected[j].course_code], day: a.day};
+/** One way to take a result's courses: a section per course, in the order of `result.selected`. */
+export type TimetableOption = {bundles: string[]; campusDays: number; idleMinutes: number; maxWalk: number | null};
+/** By result rank: the best timetables for that set of courses, best first; `more` when there were others. */
+export type Timetables = Record<string, {options: TimetableOption[]; more: boolean}>;
+
+const located = (meeting: S['Meeting']) => meeting.mode !== 'online_sync';
+const MAX_TIMETABLE_STEPS = 200_000;
+/** Timetables collected before the best `limit` are chosen; a bound on memory, not on quality in practice. */
+const MAX_TIMETABLES_RANKED = 5_000;
+
+/** Most timetables the preview pages through for one set of courses. */
+export const TIMETABLE_LIMIT = 20;
+
+const overlaps = (a: S['Meeting'], b: S['Meeting']) => a.day === b.day && a.start_min < b.end_min && b.start_min < a.end_min;
+const timesOf = (meetings: S['Meeting'][]) => meetings.map((m) => `${m.day} ${m.start_min}-${m.end_min} ${m.mode}`).sort().join(',');
+
+/**
+ * The best timetables for one result's courses, with the rules the optimizer uses: sections inside
+ * the hours and days, open seats when full sections are excluded, no overlaps (also between the
+ * meetings of one section), and enough time to walk between classes (walking time plus the buffer;
+ * an unknown walk only needs the buffer). Sections of a course that meet at the same times count
+ * once, so no two timetables look the same. The optimizer's own pick comes first, then the rest by
+ * fewest campus days, least time between classes and shortest walk.
+ */
+export function allTimetables(result: S['ScheduleResult'], request: Pick<S['GenerateRequest'], 'courses' | 'constraints' | 'walking_edges'>, limit = TIMETABLE_LIMIT): {options: TimetableOption[]; more: boolean} {
+  const {earliest_start_min: earliest, latest_end_min: latest, blocked_days: blocked, walking_buffer_min: buffer, exclude_full_sections: noFull} = request.constraints;
+  const walks = new Map<string, number>();
+  for (const edge of request.walking_edges) {
+    walks.set(`${edge.from_building_id}|${edge.to_building_id}`, edge.minutes);
+    if (edge.bidirectional !== false && !walks.has(`${edge.to_building_id}|${edge.from_building_id}`)) walks.set(`${edge.to_building_id}|${edge.from_building_id}`, edge.minutes);
+  }
+  const options = result.selected.map((entry) => {
+    const course = request.courses.find((item) => item.course_id === entry.course_id);
+    const fitting = (course?.section_bundles ?? []).filter((bundle) => bundle.bundle_id !== entry.bundle_id
+      && !(noFull && bundle.seat_status === 'full')
+      && bundle.meetings.every((meeting) => meeting.start_min >= earliest && meeting.end_min <= latest && !blocked.includes(meeting.day))
+      && !bundle.meetings.some((a, i) => bundle.meetings.slice(i + 1).some((b) => overlaps(a, b))));
+    // The optimizer's pick first, so it stands for any other section at the same times.
+    const seen = new Set<string>();
+    return [{bundle_id: entry.bundle_id, meetings: entry.meetings}, ...fitting].filter((section) => {
+      const key = timesOf(section.meetings);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  });
+  // Courses with the fewest sections are placed first, so clashes are found early.
+  const order = options.map((_, i) => i).sort((a, b) => options[a].length - options[b].length);
+  const evaluate = (meetings: S['Meeting'][]): Omit<TimetableOption, 'bundles'> | null => {
+    let idle = 0, maxWalk: number | null = 0, days = 0;
+    for (const day of DAYS) {
+      const today = meetings.filter((meeting) => meeting.day === day).sort((a, b) => a.start_min - b.start_min || a.end_min - b.end_min);
+      if (today.some(located)) days++;
+      for (let i = 1; i < today.length; i++) {
+        const [from, to] = [today[i - 1], today[i]];
+        const gap = to.start_min - from.end_min;
+        if (!located(from) && !located(to)) idle += gap;
+        if (!located(from) || !located(to)) continue;
+        const walk = from.building_id && to.building_id ? (from.building_id === to.building_id ? 0 : walks.get(`${from.building_id}|${to.building_id}`)) : undefined;
+        if (walk === undefined) {
+          if (gap < buffer) return null;
+          maxWalk = null;
+          continue;
+        }
+        if (gap < walk + buffer) return null;
+        if (maxWalk !== null) maxWalk = Math.max(maxWalk, walk);
+        idle += gap - walk;
       }
     }
-  }
-  return null;
+    return {campusDays: days, idleMinutes: idle, maxWalk};
+  };
+
+  const found: TimetableOption[] = [];
+  const picked: {bundle_id: string; meetings: S['Meeting'][]}[] = new Array(options.length);
+  let steps = 0, more = false;
+  const place = (depth: number): void => {
+    if (more) return;
+    if (depth === order.length) {
+      const metrics = evaluate(picked.flatMap((section) => section.meetings));
+      if (metrics) found.push({bundles: picked.map((section) => section.bundle_id), ...metrics});
+      if (found.length >= MAX_TIMETABLES_RANKED) more = true;
+      return;
+    }
+    const index = order[depth];
+    for (const section of options[index]) {
+      if (++steps > MAX_TIMETABLE_STEPS) {
+        more = true;
+        return;
+      }
+      const clash = order.slice(0, depth).some((other) => picked[other].meetings.some((a) => section.meetings.some((b) => overlaps(a, b))));
+      if (clash) continue;
+      picked[index] = section;
+      place(depth + 1);
+    }
+  };
+  place(0);
+
+  const own = result.selected.map((entry) => entry.bundle_id).join('|');
+  const sorted = found.sort((a, b) => Number(b.bundles.join('|') === own) - Number(a.bundles.join('|') === own)
+    || a.campusDays - b.campusDays || a.idleMinutes - b.idleMinutes || (a.maxWalk ?? Infinity) - (b.maxWalk ?? Infinity)
+    || a.bundles.join('|').localeCompare(b.bundles.join('|')));
+  return {options: sorted.slice(0, limit), more: more || sorted.length > limit};
 }
 
 /** One card of the Recommendations deck. */
@@ -171,11 +262,15 @@ export function describeOptions(response: DigResponse, conditions: DigConditions
     const tag = candidates.find((candidate): candidate is string => candidate !== null && !used.has(candidate)) ?? null;
     if (tag) used.add(tag);
 
+    // A course DIG added whose requisites could not be confirmed. Must-takes were the student's own choice.
+    const addedCodes = result.selected.filter((entry) => !required.includes(entry.course_id)).map((entry) => entry.course_code);
+    const unconfirmed = result.warnings.map((warning) => /^eligibility_unknown: Eligibility for (.+?) has not/.exec(warning)?.[1]).find((code) => code && addedCodes.includes(code));
     const under = target - result.metrics.total_credits;
     let check: string | null = null;
     if (walk?.unknown.length) check = `No walking data for ${buildingName(walk.unknown[0])}`;
     else if (walkUnknown) check = codes.includes('location_uncertain') ? 'An online class sits right next to an in-person one' : 'A class has no building listed';
     else if (codes.includes('section_full_included')) check = 'Includes a section reported as full';
+    else if (unconfirmed) check = `Check the requisites for ${unconfirmed}`;
     else if (walk?.tight) check = `Tight transfer ${DAY_SHORT[dayIndex(walk.tight.day)]} ${timeOfDay(walk.tight.end_min).replace(/ [AP]M$/, '')} → ${timeOfDay(walk.tight.start_min).replace(/ [AP]M$/, '')}`;
     else if (under > 0) check = `${plural(under, 'credit')} under your target`;
     else if (codes.includes('search_incomplete')) check = 'DIG stopped before checking every combination';
@@ -221,16 +316,18 @@ export function blockers(reasons: string[], conditions: DigConditions, mustTake:
   return reasons.map((reason) => copy[reason] ?? {title: 'Conditions', body: reason});
 }
 
-/** One-tap ways to relax the conditions after an empty result. At most three are offered. */
+/**
+ * One-tap ways to relax the conditions after an empty result, least important condition first:
+ * days, then hours, then credits, then online classes. At most three are offered.
+ */
 export function loosenChoices(conditions: DigConditions, mustCredits: number): {label: string; apply: (current: DigConditions) => DigConditions}[] {
   const choices: {label: string; apply: (current: DigConditions) => DigConditions}[] = [];
+  const off = dayOff(conditions);
+  if (off >= 0) choices.push({label: `Allow ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][off]}`, apply: (current) => ({...current, days: current.days.map((on, day) => on || day === off)})});
   if (conditions.latest < LATEST_RANGE.to) {
     const later = Math.min(LATEST_RANGE.to, conditions.latest + 90);
     choices.push({label: `End by ${hourLabel(later)}`, apply: (current) => ({...current, latest: later})});
   }
-  const off = dayOff(conditions);
-  if (off >= 0) choices.push({label: `Allow ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'][off]}`, apply: (current) => ({...current, days: current.days.map((on, day) => on || day === off)})});
-  if (!conditions.online) choices.push({label: 'Allow online classes', apply: (current) => ({...current, online: true})});
   if (conditions.earliest > EARLIEST_RANGE.from) {
     const earlier = Math.max(EARLIEST_RANGE.from, conditions.earliest - 60);
     choices.push({label: `Start at ${hourLabel(earlier)}`, apply: (current) => ({...current, earliest: earlier})});
@@ -239,5 +336,6 @@ export function loosenChoices(conditions: DigConditions, mustCredits: number): {
     const fewer = Math.max(mustCredits, conditions.credits - 3, 1);
     choices.push({label: `Aim for ${fewer} credits`, apply: (current) => ({...current, credits: fewer})});
   }
+  if (!conditions.online) choices.push({label: 'Allow online classes', apply: (current) => ({...current, online: true})});
   return choices.slice(0, 3);
 }

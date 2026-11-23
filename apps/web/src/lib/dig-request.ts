@@ -68,7 +68,7 @@ export function withoutOnline(courses: S['CandidateCourse'][]): S['CandidateCour
 
 /** Catalog rows for the candidate courses, as read from the database. */
 export type CatalogRows = {
-  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; breadth?: string[] | null; is_major_course?: boolean; eligibility?: S['CandidateCourse']['eligibility_status']}[];
+  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; breadth?: string[] | null; is_major_course?: boolean; eligibility?: S['CandidateCourse']['eligibility_status']; requirement_fit?: number | null; known_easy?: number}[];
   bundles: {course_id: string; bundle_id: string; seat_status: S['SectionBundle']['seat_status']; instructor_score: number | null}[];
   meetings: {course_id: string; bundle_id: string; day: Day; start_min: number; end_min: number; mode: S['Mode']; building_id: string | null}[];
   stats: {course_id: string; a_ab_rate: number; sample_size: number}[];
@@ -82,8 +82,11 @@ export type CatalogRows = {
  * "Short walks" and "Fewer days" raise their own weight. The optimizer has no lunch-break rule, so
  * "Lunch break" only stops it from penalizing a midday gap; the result cards flag days without one.
  */
+/** DIG favors courses with high A/AB rates; walking, gaps and campus days still count together for more. */
+const GRADE_WEIGHT = 0.6;
+
 export function weightsFor(prefer: DigPrefer[], preferredBreadths: string[] = [], balanceMajorCourses = false): S['Weights'] {
-  return {walking: prefer.includes('walks') ? 1 : 0.4, idle_gap: prefer.includes('lunch') ? 0.1 : 0.4, campus_days: prefer.includes('days') ? 1 : 0.4, grade_outcomes: 0, degree_fit: 0, instructor: 0,
+  return {walking: prefer.includes('walks') ? 1 : 0.4, idle_gap: prefer.includes('lunch') ? 0.1 : 0.4, campus_days: prefer.includes('days') ? 1 : 0.4, grade_outcomes: GRADE_WEIGHT, degree_fit: 0, instructor: 0,
     ...(preferredBreadths.length ? {breadth: 1} : {}), ...(balanceMajorCourses ? {major_balance: 0.4} : {})};
 }
 
@@ -121,7 +124,8 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
       eligibility_status: c.eligibility ?? 'unknown',
       already_completed: completed.has(c.id),
       repeatable: c.repeatable,
-      requirement_fit: null,
+      requirement_fit: c.requirement_fit ?? null,
+      ...(c.known_easy ? {known_easy: c.known_easy} : {}),
       breadth: c.breadth ? expandBreadthCodes(c.breadth) : null,
       grade_stats: stat ? {a_ab_rate: Number(stat.a_ab_rate), sample_size: stat.sample_size} : null,
       section_bundles: (bundlesByCourse.get(c.id) ?? [])
@@ -152,6 +156,8 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
     },
     preferences: {
       weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths, inputs.balanceMajorCourses),
+      // As close to the credit target as the conditions allow, before anything else is weighed.
+      prefer_max_credits: true,
       ...(inputs.preferredBreadths?.length ? {preferred_breadths: inputs.preferredBreadths, catalog_search: true} : {}),
     },
     courses: inputs.online === false ? withoutOnline(courses) : courses,

@@ -83,6 +83,8 @@ export interface components {
             already_completed: boolean;
             repeatable: boolean;
             requirement_fit?: number | null;
+            /** @description How strongly students recommend the course as an easy one, 0 to 1; 0 or absent means no word either way */
+            known_easy?: number;
             /** @description Course designation tags (breadth and Gen Ed) for preference matching; null means unknown */
             breadth?: string[] | null;
             grade_stats?: components["schemas"]["GradeStats"] | null;
@@ -115,6 +117,8 @@ export interface components {
             breadth?: number;
             /** @description Soft preference for schedules with 2–4 major courses; zero is neutral */
             major_balance?: number;
+            /** @description Soft preference for added courses students recommend as easy (CandidateCourse.known_easy) */
+            known_easy?: number;
         };
         Preferences: {
             weights: components["schemas"]["Weights"];
@@ -122,6 +126,8 @@ export interface components {
             preferred_breadths?: string[];
             /** @description Use the full candidate pool and a larger search budget when breadth preferences are set */
             catalog_search?: boolean;
+            /** @description Rank schedules closer to max_credits first, before the score */
+            prefer_max_credits?: boolean;
         };
         WalkingEdge: {
             from_building_id: string;
