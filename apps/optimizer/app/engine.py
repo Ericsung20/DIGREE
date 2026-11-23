@@ -139,6 +139,7 @@ def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) ->
         request, pool, plan,
         limits.max_catalog_search_steps if catalog_search else limits.max_search_steps,
         catalog_search=catalog_search,
+        distinct_course_sets=limits.distinct_course_sets,
     )
     search.run()
 
@@ -315,6 +316,7 @@ class _Search:
         max_steps: int,
         *,
         catalog_search: bool,
+        distinct_course_sets: bool = False,
     ):
         self._constraints = request.constraints
         self._walk_minutes = walking_minutes_by_pair(request.walking_edges)
@@ -322,6 +324,7 @@ class _Search:
         self._max_steps = max_steps
         self._top_k = request.top_k
         self._catalog_search = catalog_search
+        self._distinct_course_sets = distinct_course_sets
 
         required = [
             self._slot(index, course)
@@ -645,7 +648,25 @@ class _Search:
             travel_complete=travel_complete,
             score=schedule_score(metrics, self._plan.weights, travel_complete, data_values),
         )
-        if len(self.candidates) < self._top_k or self._rank_key(candidate) < self._rank_key(self.candidates[-1]):
+        self._offer(candidate)
+
+    def _offer(self, candidate: _Candidate) -> None:
+        """Keep the top k schedules; with distinct course sets, at most one per set of courses.
+
+        Two schedules with the same courses differ only in their sections, so
+        only the better ranked one is kept; the caller can show the other
+        sections of each course on its own.
+        """
+        key = self._rank_key(candidate)
+        if self._distinct_course_sets:
+            courses = _course_set(candidate)
+            for index, kept in enumerate(self.candidates):
+                if _course_set(kept) == courses:
+                    if key < self._rank_key(kept):
+                        del self.candidates[index]
+                        insort(self.candidates, candidate, key=self._rank_key)
+                    return
+        if len(self.candidates) < self._top_k or key < self._rank_key(self.candidates[-1]):
             insort(self.candidates, candidate, key=self._rank_key)
             if len(self.candidates) > self._top_k:
                 self.candidates.pop()
@@ -701,6 +722,10 @@ class _Search:
                 advisories["instructor_data_missing"] = messages.instructor_data_missing(missing)
 
         return values, advisories
+
+
+def _course_set(candidate: _Candidate) -> frozenset[str]:
+    return frozenset(choice.course.course_id for choice in candidate.choices)
 
 
 def _is_located(meeting: Meeting) -> bool:

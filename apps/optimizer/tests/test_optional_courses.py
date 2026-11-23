@@ -365,3 +365,51 @@ def test_results_do_not_depend_on_the_order_of_the_request():
 
 def test_same_request_twice_gives_identical_responses():
     assert run(_tangled_request()).model_dump_json() == run(_tangled_request()).model_dump_json()
+
+
+# --------------------------------------------------------------------------
+# Distinct course sets
+# --------------------------------------------------------------------------
+
+
+def _two_sections(course_id: str, day: str, **overrides) -> dict:
+    return course(
+        course_id,
+        [bundle(f"{course_id}-A", [meeting(day, 600, 650)]), bundle(f"{course_id}-B", [meeting(day, 700, 750)])],
+        **overrides,
+    )
+
+
+def test_sections_of_the_same_courses_are_separate_results_by_default():
+    payload = request(
+        [_two_sections("req", "MON"), _two_sections("a", "TUE", is_required=False), _two_sections("b", "WED", is_required=False)],
+        min_credits=6, max_credits=6,
+    )
+    sets = [tuple(course_ids(r)) for r in run(payload).results]
+    assert len(sets) == 5
+    assert len(set(sets)) == 2
+
+
+def test_distinct_course_sets_keep_the_best_sections_of_each_set_only():
+    from app.config import SearchLimits
+
+    payload = request(
+        [_two_sections("req", "MON"), _two_sections("a", "TUE", is_required=False), _two_sections("b", "WED", is_required=False)],
+        min_credits=6, max_credits=6,
+    )
+    default = run(payload).results
+    distinct = run(payload, SearchLimits(distinct_course_sets=True)).results
+    assert [course_ids(r) for r in distinct] == [["req", "a"], ["req", "b"]]
+    # Each kept schedule is the best ranked one with those courses.
+    for result in distinct:
+        best = next(r for r in default if course_ids(r) == course_ids(result))
+        assert bundle_ids(result) == bundle_ids(best)
+    assert [r.rank for r in distinct] == [1, 2]
+
+
+def test_distinct_course_sets_return_one_result_when_only_sections_differ():
+    from app.config import SearchLimits
+
+    payload = request([_two_sections("req", "MON"), _two_sections("other", "TUE")])
+    assert len(run(payload).results) == 4
+    assert len(run(payload, SearchLimits(distinct_course_sets=True)).results) == 1

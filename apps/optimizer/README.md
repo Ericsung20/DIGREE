@@ -50,12 +50,13 @@ The optimizer sends no CORS headers. It is meant to be called from the web app's
 
 ## Configuration
 
-Two optional environment variables bound the search. They are read once at startup; an invalid value stops the service with an error naming the variable.
+Optional environment variables bound the search and choose how results are picked. They are read once at startup; an invalid value stops the service with an error naming the variable.
 
 | Variable | Default | Allowed | Meaning |
 |---|---|---|---|
 | `DIGREE_MAX_SEARCH_STEPS` | `100000` | 1 to 10,000,000 | Search steps per request before the search stops |
 | `DIGREE_MAX_OPTIONAL_COURSES` | `20` | 1 to 200 | Optional courses considered per request |
+| `DIGREE_DISTINCT_COURSE_SETS` | `0` | `1` or `0` | `1`: no two results share the same set of courses; each set keeps its best-ranked sections. The DIG web app expects `1`. Leave it `0` to match `fixtures/expected.json`. |
 
 A step is one section placement or one schedule evaluation. Limits count steps, not seconds, so the same request and limits give the same response on any machine. At the default, the slowest request measured took under one second.
 

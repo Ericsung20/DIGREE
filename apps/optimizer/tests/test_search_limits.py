@@ -273,3 +273,12 @@ def test_api_applies_the_configured_limits(monkeypatch):
     body = response.json()
     assert body["diagnostics"]["search_truncated"] is True
     assert all(result["warnings"] == [SEARCH_INCOMPLETE] for result in body["results"])
+
+
+def test_distinct_course_sets_is_read_from_the_environment():
+    assert load_search_limits({}).distinct_course_sets is False
+    assert load_search_limits({"DIGREE_DISTINCT_COURSE_SETS": "1"}).distinct_course_sets is True
+    assert load_search_limits({"DIGREE_DISTINCT_COURSE_SETS": " true "}).distinct_course_sets is True
+    assert load_search_limits({"DIGREE_DISTINCT_COURSE_SETS": "0"}).distinct_course_sets is False
+    with pytest.raises(ValueError, match="DIGREE_DISTINCT_COURSE_SETS"):
+        load_search_limits({"DIGREE_DISTINCT_COURSE_SETS": "maybe"})
