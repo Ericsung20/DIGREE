@@ -1,5 +1,6 @@
 import type {Meeting} from '../data/catalog';
 import {DAYS} from '../time';
+import {friendlyCourseCode} from '../course-identity';
 
 type Slot = Pick<Meeting, 'day' | 'start_min' | 'end_min'>;
 
@@ -13,7 +14,7 @@ const DAY_TINY = ['M', 'T', 'W', 'Th', 'F', 'Sa', 'Su'];
 export const dayIndex = (day: string) => (DAYS as string[]).indexOf(day);
 
 /** "COMP SCI 577" -> "CS 577", the short form the timetable blocks and tags use. */
-export const shortCode = (code: string) => code.replace(/^COMP SCI /, 'CS ');
+export const shortCode = (code: string) => friendlyCourseCode(code.replace(/^COMP SCI /, 'CS '));
 /** "COMP SCI 577" -> "577", for the square room badge. */
 export const courseNumber = (code: string) => code.match(/\d+[A-Z]*$/i)?.[0] ?? code.slice(0, 3);
 

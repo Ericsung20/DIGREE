@@ -10,6 +10,7 @@ import {digTerm, saveDigConditions, startDig, useDigConditions, type MustTake} f
 import {CREDIT_LIMIT, EARLIEST_RANGE, LATEST_RANGE, type DigConditions} from '@/lib/dig-view';
 import {BREADTH_OPTIONS} from '@/lib/breadth';
 import {IS_MOCK} from '@/lib/supabase';
+import {friendlyCourseCode} from '@/lib/course-identity';
 import {s} from '@/lib/ui/css';
 import {DAY_LETTERS, DAY_NAMES, hourLabel} from '@/lib/ui/format';
 import fixture from '@/mocks/request.json';
@@ -95,7 +96,7 @@ function GenerateSetup() {
           <div style={s('display: flex; flex-wrap: wrap; gap: 8px')}>
             {mustTake.map((course) => (
               <span key={course.id} style={s('height: 40px; padding: 0 4px 0 14px; border-radius: 20px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.08); display: inline-flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 800')}>
-                {course.code}
+                {friendlyCourseCode(course.code)}
                 <button type="button" className="press" aria-label={`Remove ${course.code}`} onClick={() => course.record && void removeCourseRecord(course.record)} style={s('width: 32px; height: 32px; border: none; background: transparent; color: #6E6863; display: flex; align-items: center; justify-content: center; border-radius: 16px; cursor: pointer; padding: 0')}>
                   <Svg size={14} sw={2.8} join={false}>{ICON.x}</Svg>
                 </button>

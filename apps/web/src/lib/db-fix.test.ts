@@ -23,6 +23,15 @@ test('signup normalizes email and detects Auth duplicate obfuscation', () => {
   expect(isExistingSignup(null)).toBe(false);
 });
 
+test('Marketing is readable and searchable while retaining the official MARKETNG identity', () => {
+  const course = {code: 'MARKETNG 300', display_code: 'MARKETNG 300'};
+  expect(displayCourseCode(course)).toBe('Marketing 300');
+  expect(normalizeCourseCode('marketing300')).toBe('MARKETNG 300');
+  expect(matchesCourseCode(course, 'Marketing 300')).toBe(true);
+  expect(displayCourseCode({code: 'GEN BUS 782', display_code: 'GEN BUS/E P D/MARKETNG 782'})).toBe('GEN BUS/E P D/Marketing 782');
+  expect(course.code).toBe('MARKETNG 300');
+});
+
 const transfer: TransferCredit = {id: 'credit-1', institution: 'Other School', source_course: 'MAT 240', credits: 3, equivalent_course_id: 'cross240', awarded_term: '1272', notes: ''};
 test('transfer validation and credit counting prevent duplicate source/equivalent credit', () => {
   expect(validateTransfer(transfer, [])).toBeNull();

@@ -74,6 +74,8 @@ Successful DIG saves navigate directly to the saved term's Plans view. Choosing 
 
 ## Three saved plans and section details
 
+Migration `20261123091000` renders the official UW subject code `MARKETNG` as `Marketing` in `catalog_courses.display_code` and accepts the full subject name in `search_catalog_courses`. Canonical codes, IDs, aliases and requisite definitions remain unchanged; display synonyms do not become duplicate cross-list aliases.
+
 Migration `20261123090900` adds `saved_schedules.plan_slot` (1–3), preserving existing plans in slot 1. A partial unique index allows up to three active plans per owner/term/mode. `save_schedule` appends into the lowest free planned slot and returns `PLANS_FULL:` when full. `archive_schedule` archives only the selected owner's plan; both functions serialize on the same owner/term advisory lock. No existing items are replaced. Plans are selected by ID in the URL and grouped in the Plans dropdown. The preview capacity dialog lets the user delete an existing plan before saving the new one.
 
 Preview blocks open a keyboard-accessible native dialog with exact saved meeting times and building names. Lecture/discussion type, room and instructor names are fetched on demand from UW's public enrollment package endpoint, matched to the stored bundle ID and meeting. The authenticated API validates the section against the catalog, constructs a fixed-host numeric-ID URL and caches public packages for 15 minutes. Missing or unavailable official details are reported explicitly. No room/type data is guessed or added to historical meeting rows.

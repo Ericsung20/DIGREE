@@ -55,7 +55,8 @@ function Schedule() {
   const terms = useTerms();
   const remembered = useScheduleLocation();
   const currentTerm = currentTermOf(terms);
-  const term = terms.find((item) => item.id === (params.get('term') ?? remembered?.term))?.id ?? currentTerm ?? terms.at(-1)?.id ?? '';
+  const requestedTerm = params.get('term') ?? (params.has('view') ? currentTerm : remembered?.term);
+  const term = terms.find((item) => item.id === requestedTerm)?.id ?? currentTerm ?? terms.at(-1)?.id ?? '';
   const view = scheduleView(params.get('view') ?? (!params.has('term') && remembered?.term === term ? remembered.view : null), term, currentTerm, terms);
   const termLabel = terms.find((item) => item.id === term)?.label ?? '';
   const records = useCourseRecords();
