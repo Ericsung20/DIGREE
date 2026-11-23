@@ -1,12 +1,18 @@
 import {expect, test} from 'vitest';
 import expected from '../mocks/expected.json';
 import request from '../mocks/request.json';
-import {DEFAULT_CONDITIONS, blockers, conditionsChip, describeOptions, allTimetables, loosenChoices, sectionChoices, toDigBody, walkChecks, type DigResponse} from './dig-view';
+import {DEFAULT_CONDITIONS, blockers, conditionsChip, describeOptions, allTimetables, loosenChoices, majorPreferenceNotice, sectionChoices, toDigBody, walkChecks, type DigResponse} from './dig-view';
 import type {GenerateRequest} from './dig-request';
 import {parseDigInputs} from './dig-request';
 
 const response = expected as DigResponse;
 const required = request.courses.map((course) => course.course_id);
+
+test('relaxed major counts are disclosed without claiming an exhaustive search when truncated', () => {
+  expect(majorPreferenceNotice({target: 4, relaxed: false, searchLimited: false})).toBeNull();
+  expect(majorPreferenceNotice({target: 4, relaxed: true, searchLimited: true})).toContain('within the search limit');
+  expect(majorPreferenceNotice({target: 4, relaxed: true, searchLimited: false})).toContain('up to 4 major courses');
+});
 
 test('toDigBody aims one credit under the target at most, blocks days off and the weekend, and passes validation', () => {
   const body = toDigBody('2027SP', DEFAULT_CONDITIONS, ['cs400'], 3);
@@ -32,7 +38,7 @@ test('conditionsChip reads like the design: term, credits, days, hours', () => {
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, days: [true, false, true, false, true], earliest: 630})).toBe('Fall 2026 · 14 cr · M, W, F · 10:30–4');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, breadths: ['H']})).toContain(' · H');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, breadths: ['COMM_B', 'ETHNIC']})).toContain(' · Comm B, Ethnic Studies');
-  expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, majorPreference: 2})).toContain(' · ≤2 major');
+  expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, majorPreference: 2})).toContain(' · 2 major first');
   expect(conditionsChip('Fall 2026', {...DEFAULT_CONDITIONS, online: false})).toBe('Fall 2026 · 14 cr · M–Th · 9–4 · In person');
 });
 

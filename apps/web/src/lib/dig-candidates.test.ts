@@ -73,7 +73,8 @@ test('knownEasy matches the listed courses, subjects and ranges, also through cr
   expect(knownEasy(['ASTRON 103'])).toBe(0.7);
   expect(knownEasy(['ASTRON 200'])).toBe(0);
   expect(knownEasy(['ED POL 150'])).toBe(0.6);
-  expect(knownEasy(['L I S 201'])).toBe(0.6);
+  expect(knownEasy(['L I S 201'])).toBe(0);
+  expect(knownEasy(['L I S 640'])).toBe(0); // A department name alone is not difficulty evidence.
   expect(knownEasy(['ANTHRO 210', 'FOLKLORE 210'])).toBe(0.6);
   expect(knownEasy(['COMP SCI 400'])).toBe(0);
 });

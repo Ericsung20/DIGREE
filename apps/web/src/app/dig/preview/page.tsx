@@ -10,7 +10,7 @@ import {DayHeads, HourAxis, dayColumn, gridHours} from '@/components/week';
 import {currentTermOf, useBuildingNames, useTerms} from '@/lib/data/catalog';
 import {digTerm, useDigRun} from '@/lib/data/dig-session';
 import {deletePlannedSchedule, planLabel, PlanLimitError, PLAN_LIMIT, savePlannedSchedule, usePlannedScheduleState, type StoredPlan} from '@/lib/data/saved-schedules';
-import {campusDays, describeOptions} from '@/lib/dig-view';
+import {campusDays, describeOptions, majorPreferenceNotice} from '@/lib/dig-view';
 import {IS_MOCK} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
 import {WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
@@ -95,6 +95,7 @@ function SchedulePreview() {
   const off = run ? run.conditions.days.flatMap((on, day) => (on ? [] : [day])) : [];
   const blocks = WEEKDAYS.flatMap((day) => selected.flatMap((entry) => entry.meetings.filter((meeting) => meeting.day === day).map((meeting) => ({entry, meeting, day}))));
   const currentLabel = terms.find((item) => item.id === currentTermOf(terms))?.label;
+  const majors = selected.filter(entry => run?.data?.majorCourses?.[entry.course_id]?.length);
 
   async function save() {
     if (saving.current || phase !== 'idle' || !run?.data || !option) return;
@@ -136,6 +137,8 @@ function SchedulePreview() {
         <div style={s('padding-left: 10px; display: flex; flex-direction: column; gap: 4px')}>
           <h1 style={s('margin: 0; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>{run ? `${run.termLabel} plan` : ' '}</h1>
           <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{option ? `${plural(option.credits, 'credit')} · ${campusDays({...option.result, selected})} · ${walkText}` : ' '}</span>
+          {run?.data?.majorCourses && <span style={s('font-size: 13px; font-weight: 800; color: #5F5A55')}>{majors.length} major courses · {selected.length - majors.length} other courses</span>}
+          {majorPreferenceNotice(run?.data?.majorPreference) && <span role="status" style={s('font-size: 12px; font-weight: 800; line-height: 1.5; color: #6B4500')}>{majorPreferenceNotice(run?.data?.majorPreference)}</span>}
         </div>
       </header>
 
@@ -202,7 +205,7 @@ function SchedulePreview() {
           ? <Link href={`/?term=${encodeURIComponent(term)}&view=plans`} className="pop" style={s('min-height: 32px; display: flex; align-items: center; gap: 4px; font-size: 15px; font-weight: 800; color: #8C1D2B; text-decoration: none; animation-delay: 120ms')}>View in Schedule<Svg size={16} sw={2.8}>{ICON.arrow}</Svg></Link>
           : <span role={error ? 'alert' : undefined} style={s(`min-height: 32px; display: flex; align-items: center; font-size: 13px; font-weight: 700; color: ${error ? '#8C1D2B' : '#5F5A55'}`)}>{error ?? (currentLabel ? `Your enrolled ${currentLabel} schedule won’t change.` : 'Your enrolled schedule won’t change.')}</span>}
       </div>
-      {classDetail && <PreviewClassDetails key={`${term}:${classDetail.course_id}:${classDetail.bundle_id}:${classDetail.meeting.day}:${classDetail.meeting.start_min}`} term={term} entry={classDetail} onDismiss={() => setClassDetail(null)} />}
+      {classDetail && <PreviewClassDetails key={`${term}:${classDetail.course_id}:${classDetail.bundle_id}:${classDetail.meeting.day}:${classDetail.meeting.start_min}`} term={term} entry={classDetail} majorReasons={run?.data?.majorCourses?.[classDetail.course_id]} onDismiss={() => setClassDetail(null)} />}
       {planLimit && <Sheet title={savedPlans.plans.length >= PLAN_LIMIT ? '3 plans saved' : 'Ready to save'} onDismiss={() => setPlanLimit(false)}>
         <p style={s('line-height: 1.5')}>{savedPlans.plans.length >= PLAN_LIMIT ? `You can keep up to 3 plans for ${run?.termLabel}. Delete one below to save this timetable.` : 'A plan slot is available. Save this timetable to keep it with your other plans.'}</p>
         <div style={s('display: grid; gap: 10px')}>

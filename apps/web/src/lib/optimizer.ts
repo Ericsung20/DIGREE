@@ -8,7 +8,7 @@ export type ScheduleResult = components['schemas']['ScheduleResult'];
 
 /** Each failure mode stays distinct so the UI can explain it differently. */
 export type GenerateOutcome =
-  | {kind: 'ok'; data: GenerateResponse; request?: GenerateRequest}
+  | {kind: 'ok'; data: GenerateResponse; request?: GenerateRequest; majorCourses?: Record<string, string[]>; majorPreference?: {target: number; relaxed: boolean; searchLimited: boolean}}
   | {kind: 'validation'; message: string} // optimizer 422
   | {kind: 'unavailable'; message: string} // optimizer 503 or any other non-200
   | {kind: 'network'; message: string}; // optimizer unreachable
@@ -25,7 +25,7 @@ export function assertNoUserData(value: unknown, path = 'request'): void {
   }
 }
 
-export async function callOptimizer(body: GenerateRequest): Promise<GenerateOutcome> {
+export async function callOptimizer(body: GenerateRequest, timeoutMs?: number): Promise<GenerateOutcome> {
   assertNoUserData(body);
   let res: Response;
   try {
@@ -33,7 +33,7 @@ export async function callOptimizer(body: GenerateRequest): Promise<GenerateOutc
       method: 'POST',
       headers: {'content-type': 'application/json'},
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(body.preferences.catalog_search ? 120_000 : 15_000),
+      signal: AbortSignal.timeout(timeoutMs ?? (body.preferences.catalog_search ? 120_000 : 15_000)),
     });
   } catch {
     return {kind: 'network', message: 'Optimizer could not be reached'};
@@ -49,7 +49,7 @@ export async function callOptimizer(body: GenerateRequest): Promise<GenerateOutc
   if (res.status === 422 && Array.isArray(error?.details) && error.details.length) {
     const details = error.details.filter((detail: unknown): detail is string => typeof detail === 'string');
     console.warn('Optimizer rejected the DIG request', {requestId: body.request_id, details});
-    if (details.some((detail: string) => /^(?:courses\[\d+\]\.(?:breadth|is_major_course)|constraints\.max_major_courses|preferences\.(?:preferred_breadths|catalog_search|weights\.(?:breadth|major_balance))): Extra inputs are not permitted/.test(detail))) {
+    if (details.some((detail: string) => /^(?:courses\[\d+\]\.(?:breadth|is_major_course)|constraints\.(?:max|min)_major_courses|preferences\.(?:preferred_breadths|catalog_search|weights\.(?:breadth|major_balance))): Extra inputs are not permitted/.test(detail))) {
       return {kind: 'unavailable', message: 'The DIG server is running an older version.'};
     }
   }
@@ -78,27 +78,42 @@ export const usesFixtureRequest = () => process.env.DIGREE_MOCK === '1' || proce
 
 export async function generateSchedules(mockVariant?: string, rawInputs?: unknown): Promise<GenerateOutcome> {
   let body: GenerateRequest;
+  let majorCourses: Record<string, string[]> | undefined;
   if (usesFixtureRequest()) {
     const built = process.env.DIGREE_MOCK === '1' || rawInputs === undefined ? buildGenerateRequest() : buildSampleGenerateRequest(rawInputs);
     if ('error' in built) return {kind: 'validation', message: built.error};
     body = built;
   } else {
     // Loaded on demand: it reads cookies, which only exist inside a Next.js request.
-    const {buildGenerateRequestFromDb} = await import('./dig-server');
+    const {buildGenerateContextFromDb} = await import('./dig-server');
     try {
-      const built = await buildGenerateRequestFromDb(rawInputs);
+      const built = await buildGenerateContextFromDb(rawInputs);
       if ('error' in built) return {kind: 'validation', message: built.error};
-      body = built;
+      body = built.request;
+      majorCourses = built.majorCourses;
     } catch (error) {
       console.error('Building the optimizer request failed', error);
       return {kind: 'unavailable', message: 'The course catalog could not be loaded'};
     }
   }
   // The request rides along so the route can work out walking details from the same edges the optimizer saw.
-  const withRequest = (out: GenerateOutcome): GenerateOutcome => (out.kind === 'ok' ? {...out, request: body} : out);
+  const withRequest = (out: GenerateOutcome): GenerateOutcome => (out.kind === 'ok' ? {...out, request: body, majorCourses} : out);
   if (process.env.DIGREE_MOCK === '1') {
     assertNoUserData(body);
     return withRequest(mockOutcome(mockVariant));
   }
-  return withRequest(await callOptimizer(body));
+  return withRequest(await generateWithMajorTarget(body));
+}
+
+/** Try the requested count first; never silently mix relaxed results with exact matches. */
+export async function generateWithMajorTarget(body: GenerateRequest): Promise<GenerateOutcome> {
+  const target = body.constraints.max_major_courses;
+  if (target == null) return callOptimizer(body);
+  const deadline = Date.now() + (body.preferences.catalog_search ? 120_000 : 30_000);
+  const exact = {...body, constraints: {...body.constraints, min_major_courses: target}};
+  const first = await callOptimizer(exact, Math.max(1, deadline - Date.now()));
+  if (first.kind !== 'ok') return first;
+  if (first.data.results.length || target === 0) return {...first, majorPreference: {target, relaxed: false, searchLimited: first.data.diagnostics.search_truncated}};
+  const fallback = await callOptimizer({...body, constraints: {...body.constraints, min_major_courses: 0}}, Math.max(1, deadline - Date.now()));
+  return fallback.kind === 'ok' ? {...fallback, majorPreference: {target, relaxed: true, searchLimited: first.data.diagnostics.search_truncated}} : fallback;
 }

@@ -10,6 +10,7 @@ or guaranteed anything.
 REJECTION_REASONS = (
     "credits_out_of_range",
     "max_major_courses_exceeded",
+    "min_major_courses_unmet",
     "section_full",
     "outside_time_window",
     "blocked_day",

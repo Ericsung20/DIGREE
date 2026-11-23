@@ -1,15 +1,7 @@
-import type {Meeting} from '@/lib/data/catalog';
 import {s} from '@/lib/ui/css';
 import {DAY_LETTERS} from '@/lib/ui/format';
 
-type Slot = Pick<Meeting, 'start_min' | 'end_min'>;
-
-/** Hours a week grid covers: 8 to 5 as designed, widened only when a class falls outside it. */
-export function gridHours(meetings: Slot[]): {start: number; end: number} {
-  const start = Math.min(8, ...meetings.map((meeting) => Math.floor(meeting.start_min / 60)));
-  const end = Math.max(17, ...meetings.map((meeting) => Math.ceil(meeting.end_min / 60)));
-  return {start, end};
-}
+export {gridHours} from '@/lib/week';
 
 /** M T W T F above a week grid. */
 export function DayHeads({muted = []}: {muted?: number[]}) {

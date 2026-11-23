@@ -1,4 +1,4 @@
-import {beforeEach, expect, test, vi} from 'vitest';
+import {afterEach, beforeEach, expect, test, vi} from 'vitest';
 import {getRemote, resetRemote, setRemote} from './data/local-store';
 import {deletePlannedSchedule, freePlanSlot, PlanLimitError, readScheduleItems, refreshPlannedSchedules, savePlannedSchedule} from './data/saved-schedules';
 
@@ -7,11 +7,14 @@ vi.mock('./supabase', () => ({IS_MOCK: false, supabase: () => db}));
 
 const selected = [{course_id: 'course', course_code: 'CS 400', bundle_id: 'section-B', credits: 4, meetings: []}];
 beforeEach(() => {
+  const storage = new Map<string, string>();
+  vi.stubGlobal('localStorage', {getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value)});
   resetRemote();
   db.auth.getUser.mockResolvedValue({data: {user: {id: 'owner'}}});
   db.rpc.mockReset();
   db.from.mockReset();
 });
+afterEach(() => vi.unstubAllGlobals());
 
 test('a confirmed save populates the selected semester with the displayed section', async () => {
   db.rpc.mockResolvedValue({data: 'saved-id', error: null});
@@ -19,6 +22,7 @@ test('a confirmed save populates the selected semester with the displayed sectio
   expect(db.rpc).toHaveBeenCalledWith('save_schedule', {p_term: '1274', p_items: [{course_id: 'course', bundle_id: 'section-B', credits: 4}], p_request_id: 'request'});
   expect(getRemote('digree.planned:1274:plans', null)).toEqual({plans: [{id: 'saved-id', term: '1274', selected, slot: 1}], loading: false, error: null});
   expect(getRemote('digree.planned:1272:plans', null)).toBeNull();
+  expect(JSON.parse(localStorage.getItem('digree.schedule.location')!)).toEqual({term: '1274', view: 'plans', plan: 'saved-id'});
 });
 
 test.each([
@@ -75,4 +79,19 @@ test('refresh loads all active slots and keeps an empty plan available for delet
   expect(getRemote('digree.planned:1274:plans', null)).toEqual({plans: [
     {id: 'first', term: '1274', slot: 1, selected}, {id: 'third', term: '1274', slot: 3, selected: []},
   ], loading: false, error: null});
+});
+
+test('a read started before saving cannot overwrite the newly saved plans', async () => {
+  let finishOld!: (result: unknown) => void;
+  const oldRead = new Promise(resolve => {finishOld = resolve;});
+  const order = vi.fn().mockReturnValueOnce(oldRead).mockResolvedValueOnce({data: [{id: 'new', term: '1274', plan_slot: 1, saved_schedule_items: []}], error: null});
+  const query = {select: vi.fn(), eq: vi.fn(), order};
+  query.select.mockReturnValue(query); query.eq.mockReturnValue(query); db.from.mockReturnValue(query);
+  const refreshing = refreshPlannedSchedules('1274');
+  await vi.waitFor(() => expect(order).toHaveBeenCalledTimes(1));
+  db.rpc.mockResolvedValue({data: 'new', error: null});
+  await savePlannedSchedule({term: '1274', selected}, 'new-request');
+  finishOld({data: [], error: null});
+  await refreshing;
+  expect(getRemote('digree.planned:1274:plans', null)).toMatchObject({plans: [{id: 'new', slot: 1}]});
 });

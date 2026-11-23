@@ -112,7 +112,6 @@ const KNOWN_EASY: {subject: string; numbers?: number[]; range?: [number, number]
   {subject: 'CURRIC', numbers: [277], strength: 0.8},
   {subject: 'ASTRON', range: [100, 199], strength: 0.7},
   {subject: 'ED POL', strength: 0.6},
-  {subject: 'L I S', strength: 0.6},
   {subject: 'FOLKLORE', strength: 0.6},
 ];
 

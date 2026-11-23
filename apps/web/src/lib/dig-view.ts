@@ -53,7 +53,7 @@ export function conditionsChip(termLabel: string, conditions: DigConditions): st
     const option = BREADTH_OPTIONS.find((item) => item.code === code);
     return option ? [code.length === 1 ? code : option.label] : [];
   });
-  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}${typeof conditions.majorPreference === 'number' ? ` · ≤${conditions.majorPreference} major` : ''}${conditions.online ? '' : ' · In person'}${breadths.length ? ` · ${breadths.join(', ')}` : ''}`;
+  return `${termLabel} · ${conditions.credits} cr · ${dayRange(days)} · ${hour(conditions.earliest)}–${hour(conditions.latest)}${typeof conditions.majorPreference === 'number' ? ` · ${conditions.majorPreference} major first` : ''}${conditions.online ? '' : ' · In person'}${breadths.length ? ` · ${breadths.join(', ')}` : ''}`;
 }
 
 /** Walking facts for one result, worked out next to the walking data and sent with the response. */
@@ -103,7 +103,11 @@ export function walkChecks(results: S['ScheduleResult'][], edges: S['WalkingEdge
 }
 
 /** `sample` marks results that come from the shared fixture rather than the signed-in user's courses. */
-export type DigResponse = S['GenerateResponse'] & {walks?: WalkCheck[]; sample?: boolean; sections?: SectionChoices; timetables?: Timetables};
+export type DigResponse = S['GenerateResponse'] & {walks?: WalkCheck[]; sample?: boolean; sections?: SectionChoices; timetables?: Timetables; majorCourses?: Record<string, string[]>; majorPreference?: {target: number; relaxed: boolean; searchLimited: boolean}};
+
+export function majorPreferenceNotice(preference: DigResponse['majorPreference']): string | null {
+  return preference?.relaxed ? `No exact ${preference.target}-major-course match was found${preference.searchLimited ? ' within the search limit' : ''}. Showing schedules with up to ${preference.target} major courses.` : null;
+}
 
 /** One section a result's course could switch to on the Schedule Preview. */
 export type SectionChoice = {bundle_id: string; seat_status: S['SectionBundle']['seat_status']; meetings: S['Meeting'][]};

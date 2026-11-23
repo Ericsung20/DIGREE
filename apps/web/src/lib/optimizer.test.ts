@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {afterEach, expect, test, vi} from 'vitest';
-import {assertNoUserData, callOptimizer, generateSchedules} from './optimizer';
+import {assertNoUserData, callOptimizer, generateSchedules, generateWithMajorTarget} from './optimizer';
 import {buildGenerateRequest, buildSampleGenerateRequest} from './data/generate-request';
 import {DEFAULT_CONDITIONS, toDigBody} from './dig-view';
 
@@ -107,4 +107,36 @@ test('callOptimizer maps 200 / 422 / 503 / network to distinct kinds and never s
   vi.stubGlobal('fetch', never);
   await expect(callOptimizer({...body, email: 'a@b.c'} as typeof body)).rejects.toThrow(/email/);
   expect(never).not.toHaveBeenCalled();
+});
+
+test('major target returns exact matches without a relaxed second call', async () => {
+  const data = fixture('expected.json');
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(data)));
+  vi.stubGlobal('fetch', fetcher);
+  const body = structuredClone(buildGenerateRequest()); body.constraints.max_major_courses = 4;
+  const out = await generateWithMajorTarget(body);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).constraints).toMatchObject({min_major_courses: 4, max_major_courses: 4});
+  expect(out.kind === 'ok' && out.majorPreference).toMatchObject({target: 4, relaxed: false});
+});
+
+test('only an empty exact search relaxes the minimum, keeping the maximum and all other constraints', async () => {
+  const data = fixture('expected.json');
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({...data, results: [], diagnostics: {...data.diagnostics, search_truncated: true}})))
+    .mockResolvedValueOnce(new Response(JSON.stringify(data)));
+  vi.stubGlobal('fetch', fetcher);
+  const body = structuredClone(buildGenerateRequest()); body.constraints.max_major_courses = 4;
+  const out = await generateWithMajorTarget(body);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).constraints).toEqual({...body.constraints, min_major_courses: 0});
+  expect(out.kind === 'ok' && out.majorPreference).toEqual({target: 4, relaxed: true, searchLimited: true});
+});
+
+test('optimizer errors do not silently loosen a major-course target', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response('{}', {status: 503}));
+  vi.stubGlobal('fetch', fetcher);
+  const body = structuredClone(buildGenerateRequest()); body.constraints.max_major_courses = 4;
+  expect((await generateWithMajorTarget(body)).kind).toBe('unavailable');
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type {CSSProperties, ReactNode} from 'react';
 import {initials, useAccount} from '@/lib/data/account';
 import {s} from '@/lib/ui/css';
+import {rememberedScheduleUrl, useScheduleLocation} from '@/lib/data/schedule-location';
 
 // Shared pieces of the DIGREE screens. Markup and inline styles follow the design file (DIGREE.html)
 // so each screen can be checked against its board.
@@ -115,11 +116,12 @@ const TABS: {id: Exclude<Tab, 'dig'>; href: string; label: string; icon: ReactNo
 
 /** Bottom navigation. Fixed order: Schedule, GPA, DIG, Community, Chat. */
 export function TabBar({active, digHover = false, extra = ''}: {active: Tab; digHover?: boolean; extra?: string}) {
+  const scheduleHref = rememberedScheduleUrl(useScheduleLocation());
   const tab = (id: Exclude<Tab, 'dig'>) => {
     const item = TABS.find((candidate) => candidate.id === id)!;
     const on = active === id;
     return (
-      <Link href={item.href} {...(on ? {'aria-current': 'page' as const} : {'aria-label': item.label})} style={s(on ? TAB_ACTIVE : TAB_IDLE)}>
+      <Link href={id === 'schedule' ? scheduleHref : item.href} {...(on ? {'aria-current': 'page' as const} : {'aria-label': item.label})} style={s(on ? TAB_ACTIVE : TAB_IDLE)}>
         <Svg size={24} sw={on ? 2.3 : 2.2}>{item.icon}</Svg>
         {on && <span>{item.label}</span>}
       </Link>

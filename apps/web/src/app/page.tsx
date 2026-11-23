@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import {useRouter, useSearchParams} from 'next/navigation';
-import {Suspense, useRef, useState} from 'react';
+import {Suspense, useEffect, useRef, useState} from 'react';
 import {AvatarLink, EmptyNote, Frame, ICON, Svg, TabBar, Wordmark} from '@/components/dg';
 import {DayHeads, HourAxis, dayColumn, gridHours} from '@/components/week';
 import {bundleKey, currentTermOf, useBuildingNames, useBundlesFor, useCourseDetails, useTerms, type Meeting} from '@/lib/data/catalog';
@@ -13,6 +13,7 @@ import {s} from '@/lib/ui/css';
 import {DAY_NAMES, WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
 import {TONES, useCourseTone, type Tone} from '@/lib/ui/palette';
 import {scheduleUrl, scheduleView, type ScheduleView} from '@/lib/schedule-view';
+import {rememberSchedule, useScheduleLocation} from '@/lib/data/schedule-location';
 
 const CSS = `
 button{font:inherit}
@@ -52,13 +53,19 @@ function Schedule() {
   const busy = useRef(false);
 
   const terms = useTerms();
+  const remembered = useScheduleLocation();
   const currentTerm = currentTermOf(terms);
-  const term = terms.find((item) => item.id === params.get('term'))?.id ?? currentTerm ?? terms.at(-1)?.id ?? '';
-  const view = scheduleView(params.get('view'), term, currentTerm, terms);
+  const term = terms.find((item) => item.id === (params.get('term') ?? remembered?.term))?.id ?? currentTerm ?? terms.at(-1)?.id ?? '';
+  const view = scheduleView(params.get('view') ?? (!params.has('term') && remembered?.term === term ? remembered.view : null), term, currentTerm, terms);
   const termLabel = terms.find((item) => item.id === term)?.label ?? '';
   const records = useCourseRecords();
   const planState = usePlannedScheduleState(term);
-  const plan = planState.plans.find(item => item.id === params.get('plan')) ?? planState.plans[0] ?? null;
+  const plan = planState.plans.find(item => item.id === (params.get('plan') ?? (remembered?.term === term ? remembered.plan : null))) ?? planState.plans[0] ?? null;
+  useEffect(() => {
+    if (term && !planState.loading && (remembered?.term !== term || remembered.view !== view || remembered.plan !== (view === 'plans' ? plan?.id : undefined))) {
+      rememberSchedule({term, view, ...(view === 'plans' && plan ? {plan: plan.id} : {})});
+    }
+  }, [term, view, plan, planState.loading, remembered]);
   const toneOf = useCourseTone();
   const posts = usePosts();
 
@@ -158,11 +165,9 @@ function Schedule() {
               {planMenu && <div role="menu" aria-label="Saved plans" onKeyDown={event => {if (event.key === 'Escape') setPlanMenu(false);}} style={s('position: absolute; left: 0; top: 42px; z-index: 15; min-width: 220px; padding: 8px; border-radius: 18px; background: #FFFFFF; box-shadow: 0 12px 32px #28141433; display: grid; gap: 4px')}>
                 {planState.plans.map(item => <div key={item.id} style={s('display: flex; gap: 6px; align-items: center')}>
                   <button type="button" role="menuitem" onClick={() => {go('plans', term, item.id); setPlanMenu(false);}} style={s(`flex: 1; min-height: 44px; border: none; border-radius: 12px; text-align: left; padding: 10px; font-weight: 800; cursor: pointer; background: ${item.id === plan?.id ? '#F3D9DC' : '#F7F5F2'}`)}>{planLabel(item)} · {item.selected.reduce((sum, entry) => sum + entry.credits, 0)} cr</button>
-                  <button type="button" role="menuitem" aria-label={`Delete ${planLabel(item)}`} disabled={deletingPlan} onClick={() => void deletePlan(item)} style={s('min-height: 44px; border: none; border-radius: 12px; padding: 8px; background: #F7F5F2; color: #8C1D2B; font-weight: 800; cursor: pointer')}>Delete</button>
                 </div>)}
                 {!planState.plans.length && <span style={s('padding: 10px; font-size: 13px')}>{planState.loading ? 'Loading plans…' : 'No saved plans yet.'}</span>}
                 {planError && <span role="alert" style={s('padding: 8px; font-size: 13px; color: #8C1D2B')}>{planError}</span>}
-                <button type="button" role="menuitem" onClick={() => setPlanMenu(false)} style={s('min-height: 36px; border: none; background: transparent; color: #5F5A55; cursor: pointer')}>Close</button>
               </div>}
             </div>
           </div>

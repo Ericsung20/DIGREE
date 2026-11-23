@@ -6,7 +6,7 @@ import {Suspense, useEffect, useRef, useState, type PointerEvent} from 'react';
 import {BackLink, Frame, ICON, Spade, Svg, TabBar} from '@/components/dg';
 import {useBuildingNames, useTerms} from '@/lib/data/catalog';
 import {cancelDig, digTerm, saveDigConditions, setDigIndex, startDig, useDigRun, type DigRun} from '@/lib/data/dig-session';
-import {blockers, conditionsChip, describeOptions, loosenChoices, type DigOption} from '@/lib/dig-view';
+import {blockers, conditionsChip, describeOptions, loosenChoices, majorPreferenceNotice, type DigOption} from '@/lib/dig-view';
 import {s} from '@/lib/ui/css';
 import {DAY_LETTERS, WEEKDAYS, courseList, plural} from '@/lib/ui/format';
 import {DIG_TONES} from '@/lib/ui/palette';
@@ -232,6 +232,7 @@ function Recommendations() {
           <h1 style={s('margin: 0; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>{title}</h1>
           <p style={s('margin: 0; font-size: 14px; font-weight: 700; color: #5F5A55')}>{sub}</p>
         </div>
+        {run?.data && majorPreferenceNotice(run.data.majorPreference) && <span role="status" style={s('padding: 8px 10px; font-size: 12px; font-weight: 800; line-height: 1.5; color: #6B4500; background: #FCEFD2; border-radius: 12px')}>{majorPreferenceNotice(run.data.majorPreference)}</span>}
       </header>
 
       <main style={s('position: relative; flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto')}>

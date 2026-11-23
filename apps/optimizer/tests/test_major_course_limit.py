@@ -47,3 +47,31 @@ def test_balanced_preference_favors_two_major_courses_without_requiring_them():
 def test_zero_balance_weight_is_neutral():
     result = run({**payload(None), "preferences": {"weights": {**WALKING_ONLY, "major_balance": 0}}})
     assert len({item.score for item in result.results}) == 1
+
+
+def test_exact_count_excludes_a_nonmajor_filler_in_both_search_modes():
+    for catalog in (False, True):
+        body = payload(2)
+        body["constraints"]["min_major_courses"] = 2
+        body["preferences"]["catalog_search"] = catalog
+        response = run(body)
+        assert response.results
+        assert all(sum(entry.course_id in {"required-major", "optional-major"} for entry in result.selected) == 2 for result in response.results)
+
+
+def test_impossible_minimum_returns_empty_before_a_caller_relaxes_it():
+    body = payload(3)
+    body["constraints"]["min_major_courses"] = 3
+    exact = run(body)
+    assert not exact.results
+    assert "min_major_courses_unmet" in exact.diagnostics.no_results_reasons
+    body["constraints"]["min_major_courses"] = 0
+    assert run(body).results
+
+
+def test_major_minimum_can_add_an_optional_course_even_when_required_credits_already_fit():
+    body = payload(2)
+    body["constraints"].update(min_credits=3, min_major_courses=2)
+    results = run(body).results
+    assert results
+    assert all(len(item.selected) == 2 and item.selected[-1].course_id == "optional-major" for item in results)

@@ -15,6 +15,7 @@ export async function POST(request: Request) {
   // The preview pages through every timetable for each set of courses: their sections, and which combinations work.
   const req = out.request;
   const body: DigResponse = {...out.data, walks: walkChecks(out.data.results, req?.walking_edges ?? []), sample: usesFixtureRequest(),
+    majorCourses: out.majorCourses, majorPreference: out.majorPreference,
     ...(req ? {sections: sectionChoices(out.data.results, req), timetables: Object.fromEntries(out.data.results.map((result) => [result.rank, allTimetables(result, req)]))} : {})};
   return Response.json(body);
 }

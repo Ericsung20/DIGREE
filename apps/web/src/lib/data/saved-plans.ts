@@ -1,6 +1,8 @@
 import type {components} from '../contract/types';
+import {useEffect} from 'react';
 import {IS_MOCK, supabase} from '../supabase';
 import {getRemote, readStore, setRemote, useRemote, useStore, writeStore} from './local-store';
+import {rememberSchedule, SCHEDULE_LOCATION_KEY} from './schedule-location';
 
 export type PlannedSchedule = {term: string; selected: components['schemas']['SelectedBundle'][]};
 export type StoredPlan = PlannedSchedule & {id: string; slot: number};
@@ -11,6 +13,8 @@ const listKey = (term: string) => `${termKey(term)}:list`;
 const stateKey = (term: string) => `${termKey(term)}:plans`;
 const EMPTY: StoredPlan[] = [];
 const LOADING: PlanState = {plans: EMPTY, loading: true, error: null};
+const revisions = new Map<string, number>();
+const advance = (term: string) => revisions.set(term, (revisions.get(term) ?? 0) + 1);
 export const PLAN_LIMIT = 3;
 export const planLabel = (plan: StoredPlan) => `Plan ${plan.slot}`;
 export class PlanLimitError extends Error {
@@ -20,6 +24,7 @@ export function freePlanSlot(plans: Pick<StoredPlan, 'slot'>[]): number | null {
   return [1, 2, 3].find(slot => !plans.some(plan => plan.slot === slot)) ?? null;
 }
 function cachePlans(term: string, plans: StoredPlan[]) {
+  advance(term);
   const sorted = [...plans].sort((a, b) => a.slot - b.slot);
   if (IS_MOCK) writeStore(listKey(term), sorted);
   else setRemote<PlanState>(stateKey(term), {plans: sorted, loading: false, error: null});
@@ -55,7 +60,11 @@ async function loadPlans(term: string): Promise<StoredPlan[]> {
   return data.map(row => ({id: row.id, term: row.term, slot: row.plan_slot, selected: readScheduleItems(row.saved_schedule_items)}));
 }
 export async function refreshPlannedSchedules(term: string): Promise<void> {
-  if (!IS_MOCK) cachePlans(term, await loadPlans(term));
+  if (!IS_MOCK) {
+    const revision = revisions.get(term) ?? 0;
+    const plans = await loadPlans(term);
+    if ((revisions.get(term) ?? 0) === revision) cachePlans(term, plans);
+  }
 }
 export const usePlannedScheduleState: (term: string) => PlanState = IS_MOCK
   ? term => {
@@ -64,10 +73,18 @@ export const usePlannedScheduleState: (term: string) => PlanState = IS_MOCK
     const plans = useStore<StoredPlan[] | null>(listKey(term), null);
     return {plans: plans ?? legacyPlans(term, single, legacy), loading: false, error: null};
   }
-  : term => useRemote(stateKey(term), LOADING, async () => {
-    try {return {plans: term ? await loadPlans(term) : [], loading: false, error: null};}
-    catch {return {plans: EMPTY, loading: false, error: 'Couldn’t load your saved plans. Reload to try again.'};}
-  });
+  : term => {
+    useEffect(() => {
+      const refresh = () => {if (term) void refreshPlannedSchedules(term).catch(() => {});};
+      const changed = (event: StorageEvent) => {if (event.key === SCHEDULE_LOCATION_KEY) refresh();};
+      window.addEventListener('focus', refresh); window.addEventListener('storage', changed);
+      return () => {window.removeEventListener('focus', refresh); window.removeEventListener('storage', changed);};
+    }, [term]);
+    return useRemote(stateKey(term), LOADING, async () => {
+      try {return {plans: term ? await loadPlans(term) : [], loading: false, error: null};}
+      catch {return {plans: EMPTY, loading: false, error: 'Couldn’t load your saved plans. Reload to try again.'};}
+    });
+  };
 export function usePlannedSchedule(term: string, id?: string | null): StoredPlan | null {
   const {plans} = usePlannedScheduleState(term);
   return plans.find(plan => plan.id === id) ?? plans[0] ?? null;
@@ -79,6 +96,7 @@ export async function savePlannedSchedule(plan: PlannedSchedule, requestId: stri
     if (!slot) throw new PlanLimitError();
     const id = crypto.randomUUID();
     cachePlans(plan.term, [...existing, {...plan, id, slot}]);
+    rememberSchedule({term: plan.term, view: 'plans', plan: id});
     return id;
   }
   const db = supabase();
@@ -92,9 +110,11 @@ export async function savePlannedSchedule(plan: PlannedSchedule, requestId: stri
   }
   if (error) throw error;
   if (typeof id !== 'string' || !id) throw new Error('The plan could not be confirmed as saved. Try again.');
+  advance(plan.term); // Invalidate reads started before the transaction committed.
   // A failed refresh must not turn a confirmed save into a retry/duplicate.
   try {await refreshPlannedSchedules(plan.term);}
   catch {cachePlans(plan.term, [...existing, {...plan, id, slot: slot ?? 1}]);}
+  rememberSchedule({term: plan.term, view: 'plans', plan: id});
   return id;
 }
 export async function deletePlannedSchedule(plan: StoredPlan): Promise<void> {

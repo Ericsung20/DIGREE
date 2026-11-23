@@ -100,6 +100,8 @@ export interface components {
             max_walk_per_transition_min?: number | null;
             /** @description Maximum selected major courses, including required courses; null means no hard limit */
             max_major_courses?: number | null;
+            /** @description Minimum selected major courses, including required courses; defaults to 0 */
+            min_major_courses?: number;
             /**
              * @description Only when seat-status data is reliable
              * @default false

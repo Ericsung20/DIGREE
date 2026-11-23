@@ -205,6 +205,8 @@ def _optional_courses_needed(request: GenerateRequest, required: list[CandidateC
             total + credits for total in required_totals for credits in course.credit_options
         }
     constraints = request.constraints
+    if sum(course.is_major_course for course in required) < constraints.min_major_courses:
+        return min(required_totals) < constraints.max_credits
     if any(constraints.min_credits <= total <= constraints.max_credits for total in required_totals):
         return False
     # Optional courses can only add credits, so they help only when some
@@ -355,10 +357,12 @@ class _Search:
         ]
         self._min_credits_from = [0] * (count + 1)
         self._max_credits_from = [0] * (count + 1)
+        self._major_courses_from = [0] * (count + 1)
         for i in range(count - 1, -1, -1):
             slot = self._slots[i]
             self._min_credits_from[i] = self._min_credits_from[i + 1] + (slot.credit_options[0] if slot.course.is_required else 0)
             self._max_credits_from[i] = self._max_credits_from[i + 1] + slot.credit_options[-1]
+            self._major_courses_from[i] = self._major_courses_from[i + 1] + int(slot.course.is_major_course)
 
         self.steps = 0
         self.stopped_early = False
@@ -440,6 +444,10 @@ class _Search:
                 branches.append(branch)
 
     def _catalog_branch(self, index: int, credits: int, chosen: list[_Choice]) -> Iterator[None]:
+        if self._constraints.min_major_courses and sum(choice.course.is_major_course for choice in chosen) + self._major_courses_from[index] < self._constraints.min_major_courses:
+            self._step()
+            self._reject("min_major_courses_unmet", 1)
+            return
         for choice in self._catalog_placements(index, credits, chosen):
             yield
             if choice is None:
@@ -495,6 +503,10 @@ class _Search:
         self.steps += 1
 
     def _descend(self, depth: int, credits_so_far: int, chosen: list[_Choice]) -> None:
+        if self._constraints.min_major_courses and sum(choice.course.is_major_course for choice in chosen) + self._major_courses_from[depth] < self._constraints.min_major_courses:
+            self._step()
+            self._reject("min_major_courses_unmet", self._completions_from[depth])
+            return
         if depth == len(self._slots):
             self._step()
             if chosen:  # selecting nothing is not a schedule, and is never counted
@@ -580,6 +592,9 @@ class _Search:
         return self._walk_minutes.get((origin, destination))
 
     def _evaluate_complete(self, total_credits: int, chosen: list[_Choice]) -> None:
+        if self._constraints.min_major_courses and sum(choice.course.is_major_course for choice in chosen) < self._constraints.min_major_courses:
+            self._reject("min_major_courses_unmet", 1)
+            return
         # Credits need no check here: the bounds tests in _descend are exact
         # once the last course is settled.
         # Walking is judged on complete combinations only: two meetings that

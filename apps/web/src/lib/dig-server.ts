@@ -5,6 +5,7 @@ import {compatibleSections, graduateLevel, graduateProgram, knownEasy, pickCandi
 import {parseDigInputs, toGenerateRequest, type CatalogRows, type GenerateRequest} from './dig-request';
 import {evaluateRequisites, requisiteEvidence, type PriorAttempt, type RecognizedTransfer} from './dig-prerequisites';
 import {supabaseServer} from './supabase-server';
+import {majorCourseRules, type MajorOption} from './major-courses';
 
 type Db = Awaited<ReturnType<typeof supabaseServer>>;
 const COURSE_COLUMNS = 'id, code, credit_options, repeatable, breadth';
@@ -46,15 +47,15 @@ async function plannedCourseFlags(db: Db, term: string): Promise<{course_id: str
   return data as {course_id: string; counts_toward_major: boolean}[];
 }
 
-async function majorCourseCodes(db: Db, programIds: string[]): Promise<Set<string>> {
-  const codes = new Set<string>();
-  if (!programIds.length) return codes;
+async function loadMajorRules(db: Db, programIds: string[]): Promise<Map<string, string[]>> {
+  const options: MajorOption[] = [];
+  if (!programIds.length) return new Map();
   for (let start = 0; ; start += 1000) {
     const {data, error} = await db.from('program_requirement_course_options')
-      .select('course_code').in('program_id', programIds).order('course_code').range(start, start + 999);
+      .select('course_code, requirement_group, program').in('program_id', programIds).order('course_code').range(start, start + 999);
     if (error) throw error;
-    for (const row of data as {course_code: string | null}[]) if (row.course_code) codes.add(row.course_code.trim().replace(/\s+/g, ' ').toUpperCase());
-    if (data.length < 1000) return codes;
+    options.push(...data as MajorOption[]);
+    if (data.length < 1000) return majorCourseRules(options);
   }
 }
 
@@ -190,7 +191,7 @@ async function allDesignationCourses(db: Db, term: string, preferred: string[]):
 }
 
 /** Resolve planned courses and optional catalog candidates for the selected term. */
-export async function buildGenerateRequestFromDb(raw: unknown): Promise<GenerateRequest | {error: string}> {
+export async function buildGenerateContextFromDb(raw: unknown): Promise<{request: GenerateRequest; majorCourses: Record<string, string[]>} | {error: string}> {
   const inputs = parseDigInputs(raw);
   if ('error' in inputs) return inputs;
   const {term} = inputs;
@@ -224,6 +225,7 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
     for (const [id, row] of priorRows) aliases.set(id, [...new Set([...(aliases.get(id) ?? []), ...(row.course_aliases ?? [])])]);
   }
   const programs = (profiles.data ?? []) as {program_id: string | null; kind: string; is_primary: boolean; name: string}[];
+  const majorRules = await loadMajorRules(db, programs.flatMap(item => item.kind === 'major' && item.program_id ? [item.program_id] : []));
   const program = programs.find(item => item.is_primary)?.name ?? '';
   const undergraduate = /(?:,\s*|\s)(?:BA|BS[A-Z]*|BBA|BFA|BM|BNS|BLA|Bachelor)(?=\b)/i.test(program);
   const evidence = requisiteEvidence(history, term, aliases, planned.filter(course => required.has(course.id)), undergraduate, transfers);
@@ -268,10 +270,9 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
   let catalogPool = false;
   if (optionalNeeded) {
     const started = Date.now();
-    const [termBundles, termMeetings, majorCodes, designated] = await Promise.all([
+    const [termBundles, termMeetings, designated] = await Promise.all([
       wholeTerm<CatalogRows['bundles'][number]>(db, 'section_bundles', 'course_id, bundle_id, seat_status, instructor_score', term),
       wholeTerm<CatalogRows['meetings'][number]>(db, 'meetings', 'course_id, bundle_id, day, start_min, end_min, mode, building_id', term),
-      majorCourseCodes(db, programs.flatMap(item => item.kind === 'major' && item.program_id ? [item.program_id] : [])),
       preferred.length ? allDesignationCourses(db, term, preferred) : [],
     ]);
     termSections = {bundles: termBundles, meetings: termMeetings};
@@ -334,7 +335,7 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
       id: course.id,
       code: course.code,
       credits: Math.max(...course.credit_options),
-      major: [course.code, ...(aliases.get(course.id) ?? [])].some((code) => majorCodes.has(code.trim().replace(/\s+/g, ' ').toUpperCase())),
+      major: [course.code, ...(aliases.get(course.id) ?? [])].some((code) => majorRules.has(code.trim().replace(/\s+/g, ' ').toUpperCase())),
       designation: designationTags.has(course.id),
       related: subjects.has(subjectOf(course.code) ?? ''),
       eligible: course.eligibility === 'eligible',
@@ -369,15 +370,17 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
       if (tags.length) course.breadth = [...new Set([...(course.breadth ?? []), ...tags])];
     }
   }
-  if ((inputs.maxMajorCourses !== undefined && inputs.maxMajorCourses !== null) || inputs.balanceMajorCourses) {
-    const majorCodes = await majorCourseCodes(db, programs.flatMap(item => item.kind === 'major' && item.program_id ? [item.program_id] : []));
-    if (!majorCodes.size && !explicitMajor.size) {
+  const majorCourses: Record<string, string[]> = {};
+  {
+    if (!majorRules.size && !explicitMajor.size) {
       if (inputs.maxMajorCourses !== undefined && inputs.maxMajorCourses !== null) return {error: 'Set your academic program or mark planned courses for your major before using the major-course limit.'};
       inputs.balanceMajorCourses = false;
     }
     for (const course of courses) {
       const codes = [course.code, ...(aliases.get(course.id) ?? [])].map((code) => code.trim().replace(/\s+/g, ' ').toUpperCase());
-      course.is_major_course = explicitMajor.has(course.id) || codes.some((code) => majorCodes.has(code));
+      const reasons = [...new Set(codes.flatMap(code => majorRules.get(code) ?? []))];
+      course.is_major_course = explicitMajor.has(course.id) || reasons.length > 0;
+      if (course.is_major_course) majorCourses[course.id] = reasons.length ? reasons : ['Marked as a major course'];
     }
     const mustTakeMajor = courses.filter((course) => required.has(course.id) && course.is_major_course).length;
     if (inputs.maxMajorCourses !== undefined && inputs.maxMajorCourses !== null && mustTakeMajor > inputs.maxMajorCourses) return {error: `${mustTakeMajor} must-take courses count toward your major. Raise the major-course limit.`};
@@ -434,5 +437,10 @@ export async function buildGenerateRequestFromDb(raw: unknown): Promise<Generate
     request.preferences.weights.known_easy = KNOWN_EASY_WEIGHT;
   }
   if (!request.courses.length) return {error: 'Every course DIG found meets online only. Allow online classes or add a must-take course.'};
-  return request;
+  return {request, majorCourses};
+}
+
+export async function buildGenerateRequestFromDb(raw: unknown): Promise<GenerateRequest | {error: string}> {
+  const context = await buildGenerateContextFromDb(raw);
+  return 'error' in context ? context : context.request;
 }

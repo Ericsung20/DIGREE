@@ -106,7 +106,7 @@ export async function loadFriendSchedule(friend: Friend, term: string | null): P
   // RLS allows accepted friends to read saved schedules and items.
   const {data: schedule, error: scheduleError} = await db.from('saved_schedules')
     .select(`saved_schedule_items!inner(${SAVED_ITEMS})`).eq('user_id', friend.id).eq('term', term).eq('mode', 'planned')
-    .eq('state', 'active').maybeSingle();
+    .eq('state', 'active').order('plan_slot').limit(1).maybeSingle();
   if (scheduleError) throw scheduleError;
   const rows = readScheduleItems(schedule?.saved_schedule_items ?? []);
   return {access: 'full', items: rows.map((r) => ({label: r.course_code, meetings: r.meetings}))};

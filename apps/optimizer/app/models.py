@@ -89,12 +89,15 @@ class Constraints(ContractModel):
     walking_buffer_min: int = Field(ge=0, le=60)
     max_walk_per_transition_min: int | None = Field(default=None, ge=0, le=120)
     max_major_courses: int | None = Field(default=None, ge=0, le=6)
+    min_major_courses: int = Field(default=0, ge=0, le=6)
     exclude_full_sections: bool = False
 
     @model_validator(mode="after")
     def _consistent(self) -> "Constraints":
         if self.min_credits > self.max_credits:
             raise ValueError("min_credits must be less than or equal to max_credits")
+        if self.max_major_courses is not None and self.min_major_courses > self.max_major_courses:
+            raise ValueError("min_major_courses must not exceed max_major_courses")
         duplicates = _duplicates(self.blocked_days)
         if duplicates:
             raise ValueError(f"blocked_days must be unique: {', '.join(duplicates)}")

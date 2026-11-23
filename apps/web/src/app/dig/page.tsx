@@ -189,7 +189,7 @@ function GenerateSetup() {
               <option value="none">No preference</option>
             </select>
           </div>
-          <span style={s('padding-left: 2px; color: #8A847E; font-size: 11px; font-weight: 700')}>{conditions.majorPreference === 'balanced' ? 'A gentle preference based on your timetable.' : conditions.majorPreference === 'none' ? 'Major course count will not affect recommendations.' : 'A firm maximum, including must-take courses.'}</span>
+          <span style={s('padding-left: 2px; color: #6E6863; font-size: 12px; font-weight: 700; line-height: 1.5')}>{conditions.majorPreference === 'balanced' ? 'A gentle preference based on your timetable.' : conditions.majorPreference === 'none' ? 'Major course count will not affect recommendations.' : `Try exactly ${conditions.majorPreference}, including must-takes. If no match is found, allow fewer.`} Major courses include electives listed by any of your majors, even in other departments.</span>
         </section>
 
         <section className="rise" style={s('padding: 16px; border-radius: 24px; background: #FFFFFF; box-shadow: 0 2px 12px rgba(40,20,20,.05); display: flex; flex-direction: column; gap: 12px; animation-delay: 360ms')}>
