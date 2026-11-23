@@ -100,8 +100,14 @@ class _ScoringPlan:
     instructor: DataFactor | None
     breadth: DataFactor | None
     major_balance: bool
+    known_easy: bool  # compared: some optional courses are recommended as easy, others not
     preferred_breadths: frozenset[str]
     notices: dict[str, str]  # advisory warnings every result carries, by code
+
+
+# With distinct course sets, how many schedules per requested result are kept
+# while searching, so the final picks can differ from each other.
+DIVERSITY_SHORTLIST = 20
 
 
 class _StepLimitReached(Exception):
@@ -131,7 +137,8 @@ def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) ->
 
     optional_needed = _optional_courses_needed(request, required)
     usable = _usable_optional_courses(request) if optional_needed else []
-    catalog_search = bool(request.preferences.catalog_search and request.preferences.preferred_breadths and usable)
+    # The caller asks for the whole pool; designations are no longer required for it.
+    catalog_search = bool(request.preferences.catalog_search and usable)
     pool = usable if catalog_search else usable[: limits.max_optional_courses]
 
     plan = _scoring_plan(request.preferences.weights, required, [course for _, course in usable], request.preferences.preferred_breadths)
@@ -139,6 +146,7 @@ def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) ->
         request, pool, plan,
         limits.max_catalog_search_steps if catalog_search else limits.max_search_steps,
         catalog_search=catalog_search,
+        distinct_course_sets=limits.distinct_course_sets,
     )
     search.run()
 
@@ -150,7 +158,7 @@ def generate(request: GenerateRequest, limits: SearchLimits = SearchLimits()) ->
         notices["search_incomplete"] = messages.search_incomplete()
 
     results = [
-        _to_result(rank, candidate, notices) for rank, candidate in enumerate(search.candidates, start=1)
+        _to_result(rank, candidate, notices) for rank, candidate in enumerate(search.results(), start=1)
     ]
 
     occurred = [reason for reason in REJECTION_REASONS if search.rejected[reason] > 0]
@@ -300,10 +308,11 @@ def _scoring_plan(
 
     compared = [name for name in SHAPE_FACTORS if getattr(weights, name) > 0]
     major_balance = weights.major_balance > 0 and any(course.is_major_course for course in optional)
-    if not compared and grade is None and degree_fit is None and instructor is None and breadth is None and not major_balance:
+    known_easy = weights.known_easy > 0 and len({course.known_easy for course in optional}) > 1
+    if not compared and grade is None and degree_fit is None and instructor is None and breadth is None and not major_balance and not known_easy:
         notices["score_not_comparable"] = messages.score_not_comparable()
 
-    return _ScoringPlan(weights, grade, degree_fit, instructor, breadth, major_balance, preferred, notices)
+    return _ScoringPlan(weights, grade, degree_fit, instructor, breadth, major_balance, known_easy, preferred, notices)
 
 
 class _Search:
@@ -315,6 +324,7 @@ class _Search:
         max_steps: int,
         *,
         catalog_search: bool,
+        distinct_course_sets: bool = False,
     ):
         self._constraints = request.constraints
         self._walk_minutes = walking_minutes_by_pair(request.walking_edges)
@@ -322,6 +332,8 @@ class _Search:
         self._max_steps = max_steps
         self._top_k = request.top_k
         self._catalog_search = catalog_search
+        self._distinct_course_sets = distinct_course_sets
+        self._prefer_max_credits = request.preferences.prefer_max_credits
 
         required = [
             self._slot(index, course)
@@ -353,6 +365,7 @@ class _Search:
         self.explored = 0
         self.rejected: Counter[str] = Counter()
         self.candidates: list[_Candidate] = []
+        self._kept_sets: dict[frozenset[str], _Candidate] = {}  # with distinct course sets
 
     def _slot(self, request_index: int, course: CandidateCourse) -> _Slot:
         return _Slot(
@@ -645,14 +658,63 @@ class _Search:
             travel_complete=travel_complete,
             score=schedule_score(metrics, self._plan.weights, travel_complete, data_values),
         )
-        if len(self.candidates) < self._top_k or self._rank_key(candidate) < self._rank_key(self.candidates[-1]):
+        self._offer(candidate)
+
+    def _offer(self, candidate: _Candidate) -> None:
+        """Keep the top k schedules; with distinct course sets, at most one per set of courses.
+
+        Two schedules with the same courses differ only in their sections, so
+        only the better ranked one is kept; the caller can show the other
+        sections of each course on its own. With distinct course sets a wider
+        shortlist is kept, so `results` can pick sets that differ from each other.
+        """
+        key = self._rank_key(candidate)
+        courses = _course_set(candidate) if self._distinct_course_sets else None
+        if courses is not None:
+            kept = self._kept_sets.get(courses)
+            if kept is not None:
+                if key < self._rank_key(kept):
+                    self.candidates.remove(kept)
+                    insort(self.candidates, candidate, key=self._rank_key)
+                    self._kept_sets[courses] = candidate
+                return
+        keep = self._top_k * DIVERSITY_SHORTLIST if self._distinct_course_sets else self._top_k
+        if len(self.candidates) < keep or key < self._rank_key(self.candidates[-1]):
             insort(self.candidates, candidate, key=self._rank_key)
-            if len(self.candidates) > self._top_k:
-                self.candidates.pop()
+            if courses is not None:
+                self._kept_sets[courses] = candidate
+            if len(self.candidates) > keep:
+                dropped = self.candidates.pop()
+                if courses is not None:
+                    del self._kept_sets[_course_set(dropped)]
+
+    def results(self) -> list[_Candidate]:
+        """The schedules to return, best first.
+
+        Without distinct course sets, the top k. With them, the best schedule
+        first, then each next one is the best ranked that shares fewer than half
+        of its added courses with every schedule already picked; when none does,
+        the one sharing the fewest. The picks are returned in rank order.
+        """
+        if not self._distinct_course_sets:
+            return self.candidates[: self._top_k]
+        remaining = list(self.candidates)
+        picked: list[_Candidate] = []
+        while remaining and len(picked) < self._top_k:
+            best = min(
+                range(len(remaining)),
+                key=lambda i: (_diversity_tier(remaining[i], picked), i),
+            )
+            picked.append(remaining.pop(best))
+        return sorted(picked, key=self._rank_key)
 
     def _rank_key(self, candidate: _Candidate) -> tuple:
         review, score, selection = candidate.sort_key()
-        return (score, review, selection) if self._catalog_search else (review, score, selection)
+        key = (score, review, selection) if self._catalog_search else (review, score, selection)
+        if self._prefer_max_credits:
+            # Closer to the credit target first; the score decides between equal totals.
+            return (self._constraints.max_credits - candidate.metrics.total_credits, *key)
+        return key
 
     def _data_factors(self, choices: tuple[_Choice, ...]) -> tuple[dict[str, float], dict[str, str]]:
         """Values of the compared data-driven factors, and notes on what was missing.
@@ -686,6 +748,10 @@ class _Search:
             if missing:
                 advisories["breadth_data_missing"] = messages.breadth_data_missing(missing)
 
+        if plan.known_easy:
+            # Mean over the added courses; a schedule that adds none gets 0.
+            values["known_easy"] = sum(c.course.known_easy for c in optional) / len(optional) if optional else 0.0
+
         if plan.major_balance:
             values["major_balance"] = major_balance_component(sum(choice.course.is_major_course for choice in choices))
 
@@ -701,6 +767,23 @@ class _Search:
                 advisories["instructor_data_missing"] = messages.instructor_data_missing(missing)
 
         return values, advisories
+
+
+def _course_set(candidate: _Candidate) -> frozenset[str]:
+    return frozenset(choice.course.course_id for choice in candidate.choices)
+
+
+def _added_courses(candidate: _Candidate) -> frozenset[str]:
+    return frozenset(c.course.course_id for c in candidate.choices if not c.course.is_required)
+
+
+def _diversity_tier(candidate: _Candidate, picked: list[_Candidate]) -> tuple[int, int]:
+    """(0, 0) when the candidate shares fewer than half of its added courses with
+    every pick; otherwise (1, most courses shared with any pick). Lower is more distinct."""
+    added = _added_courses(candidate)
+    shared = [len(added & _added_courses(other)) for other in picked]
+    worst = max(shared, default=0)
+    return (0, 0) if 2 * worst < len(added) else (1, worst)
 
 
 def _is_located(meeting: Meeting) -> bool:

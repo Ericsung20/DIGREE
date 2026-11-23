@@ -29,10 +29,11 @@ powershell -File scripts/use-shared-env.ps1 -PublicKey "공개_클라이언트_�
 cd apps/optimizer
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
+$env:DIGREE_DISTINCT_COURSE_SETS='1'
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-macOS/Linux에서는 `python3 -m venv .venv`, `.venv/bin/python -m pip install -e .`, `.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`을 사용한다.
+macOS/Linux에서는 `python3 -m venv .venv`, `.venv/bin/python -m pip install -e .`, `DIGREE_DISTINCT_COURSE_SETS=1 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000`을 사용한다. 이 옵션은 추천마다 다른 과목 구성을 보여준다. 기존 fixture와 정확히 비교하는 smoke test를 할 때는 별도 서버에서 `0`을 사용한다.
 
 터미널 B, 저장소 루트에서 웹을 실행한다.
 

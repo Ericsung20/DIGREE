@@ -10,7 +10,7 @@ type Day = S['Day'];
 
 export type DigPrefer = 'walks' | 'lunch' | 'days';
 const PREFER: DigPrefer[] = ['walks', 'lunch', 'days'];
-export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]; prefer?: DigPrefer[]; preferredBreadths?: string[]; maxMajorCourses?: number | null; balanceMajorCourses?: boolean; related?: boolean};
+export type DigInputs = {term: string; minCredits: number; maxCredits: number; required: string[]; earliest: number; latest: number; blockedDays: Day[]; prefer?: DigPrefer[]; preferredBreadths?: string[]; maxMajorCourses?: number | null; balanceMajorCourses?: boolean; related?: boolean; online?: boolean};
 
 const int = (v: unknown, min: number, max: number): number | null => {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
@@ -41,17 +41,34 @@ export function parseDigInputs(raw: unknown): DigInputs | {error: string} {
   if (maxMajorCourses === null && r.max_major_courses != null) return {error: 'Major course limit must be from 0 to 6.'};
   if (r.balance_major_courses !== undefined && typeof r.balance_major_courses !== 'boolean') return {error: 'Invalid major course preference.'};
   if (maxMajorCourses !== null && r.balance_major_courses === true) return {error: 'Choose either a major-course limit or a balanced preference.'};
+  if (r.online !== undefined && typeof r.online !== 'boolean') return {error: 'Invalid online class preference.'};
   return {term: r.term, minCredits, maxCredits, required, earliest, latest, blockedDays: blocked as Day[],
     ...(prefer !== undefined ? {prefer: prefer as DigPrefer[]} : {}),
     ...(preferredBreadths !== undefined ? {preferredBreadths: [...new Set(preferredBreadths.map((code) => code.trim().toUpperCase()))]} : {}),
     ...(r.max_major_courses !== undefined ? {maxMajorCourses} : {}),
     ...(r.balance_major_courses !== undefined ? {balanceMajorCourses: r.balance_major_courses as boolean} : {}),
-    ...(r.related === true ? {related: true} : {})};
+    ...(r.related === true ? {related: true} : {}),
+    ...(r.online === false ? {online: false} : {})};
+}
+
+/** Online for DIG's purposes: any online meeting, or no meeting times at all (asynchronous). */
+export const isOnlineSection = (bundle: Pick<S['SectionBundle'], 'meetings'>) => bundle.meetings.length === 0 || bundle.meetings.some((meeting) => meeting.mode === 'online_sync');
+
+/**
+ * "No online classes": drops online sections. A must-take course whose sections are all online keeps
+ * them, since the student chose it; an optional course with nothing left is dropped.
+ */
+export function withoutOnline(courses: S['CandidateCourse'][]): S['CandidateCourse'][] {
+  return courses.flatMap((course) => {
+    const inPerson = course.section_bundles.filter((bundle) => !isOnlineSection(bundle));
+    if (inPerson.length) return [{...course, section_bundles: inPerson}];
+    return course.is_required ? [course] : [];
+  });
 }
 
 /** Catalog rows for the candidate courses, as read from the database. */
 export type CatalogRows = {
-  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; breadth?: string[] | null; is_major_course?: boolean; eligibility?: S['CandidateCourse']['eligibility_status']}[];
+  courses: {id: string; code: string; credit_options: number[]; repeatable: boolean; breadth?: string[] | null; is_major_course?: boolean; eligibility?: S['CandidateCourse']['eligibility_status']; requirement_fit?: number | null; known_easy?: number}[];
   bundles: {course_id: string; bundle_id: string; seat_status: S['SectionBundle']['seat_status']; instructor_score: number | null}[];
   meetings: {course_id: string; bundle_id: string; day: Day; start_min: number; end_min: number; mode: S['Mode']; building_id: string | null}[];
   stats: {course_id: string; a_ab_rate: number; sample_size: number}[];
@@ -65,8 +82,11 @@ export type CatalogRows = {
  * "Short walks" and "Fewer days" raise their own weight. The optimizer has no lunch-break rule, so
  * "Lunch break" only stops it from penalizing a midday gap; the result cards flag days without one.
  */
+/** DIG favors courses with high A/AB rates; walking, gaps and campus days still count together for more. */
+const GRADE_WEIGHT = 0.6;
+
 export function weightsFor(prefer: DigPrefer[], preferredBreadths: string[] = [], balanceMajorCourses = false): S['Weights'] {
-  return {walking: prefer.includes('walks') ? 1 : 0.4, idle_gap: prefer.includes('lunch') ? 0.1 : 0.4, campus_days: prefer.includes('days') ? 1 : 0.4, grade_outcomes: 0, degree_fit: 0, instructor: 0,
+  return {walking: prefer.includes('walks') ? 1 : 0.4, idle_gap: prefer.includes('lunch') ? 0.1 : 0.4, campus_days: prefer.includes('days') ? 1 : 0.4, grade_outcomes: GRADE_WEIGHT, degree_fit: 0, instructor: 0,
     ...(preferredBreadths.length ? {breadth: 1} : {}), ...(balanceMajorCourses ? {major_balance: 0.4} : {})};
 }
 
@@ -93,6 +113,31 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
   const statsByCourse = new Map(rows.stats.map((stat) => [stat.course_id, stat]));
   const required = new Set(inputs.required);
   const completed = new Set(rows.completedCourseIds);
+  const courses: S['CandidateCourse'][] = rows.courses.map((c) => {
+    const stat = statsByCourse.get(c.id);
+    return {
+      course_id: c.id,
+      course_code: c.code,
+      credit_options: c.credit_options,
+      is_required: required.has(c.id),
+      is_major_course: c.is_major_course ?? false,
+      eligibility_status: c.eligibility ?? 'unknown',
+      already_completed: completed.has(c.id),
+      repeatable: c.repeatable,
+      requirement_fit: c.requirement_fit ?? null,
+      ...(c.known_easy ? {known_easy: c.known_easy} : {}),
+      breadth: c.breadth ? expandBreadthCodes(c.breadth) : null,
+      grade_stats: stat ? {a_ab_rate: Number(stat.a_ab_rate), sample_size: stat.sample_size} : null,
+      section_bundles: (bundlesByCourse.get(c.id) ?? [])
+        .map((b) => ({
+          bundle_id: b.bundle_id,
+          seat_status: b.seat_status,
+          instructor_score: b.instructor_score === null ? null : Number(b.instructor_score),
+          meetings: (meetingsByBundle.get(meetingKey(c.id, b.bundle_id)) ?? [])
+            .map((m) => ({day: m.day, start_min: m.start_min, end_min: m.end_min, mode: m.mode, building_id: m.building_id})),
+        })),
+    };
+  });
   return {
     contract_version: '1.0',
     request_id: requestId,
@@ -111,32 +156,11 @@ export function toGenerateRequest(inputs: DigInputs, rows: CatalogRows, requestI
     },
     preferences: {
       weights: weightsFor(inputs.prefer ?? [], inputs.preferredBreadths, inputs.balanceMajorCourses),
+      // As close to the credit target as the conditions allow, before anything else is weighed.
+      prefer_max_credits: true,
       ...(inputs.preferredBreadths?.length ? {preferred_breadths: inputs.preferredBreadths, catalog_search: true} : {}),
     },
-    courses: rows.courses.map((c) => {
-      const stat = statsByCourse.get(c.id);
-      return {
-        course_id: c.id,
-        course_code: c.code,
-        credit_options: c.credit_options,
-        is_required: required.has(c.id),
-        is_major_course: c.is_major_course ?? false,
-        eligibility_status: c.eligibility ?? 'unknown',
-        already_completed: completed.has(c.id),
-        repeatable: c.repeatable,
-        requirement_fit: null,
-        breadth: c.breadth ? expandBreadthCodes(c.breadth) : null,
-        grade_stats: stat ? {a_ab_rate: Number(stat.a_ab_rate), sample_size: stat.sample_size} : null,
-        section_bundles: (bundlesByCourse.get(c.id) ?? [])
-          .map((b) => ({
-            bundle_id: b.bundle_id,
-            seat_status: b.seat_status,
-            instructor_score: b.instructor_score === null ? null : Number(b.instructor_score),
-            meetings: (meetingsByBundle.get(meetingKey(c.id, b.bundle_id)) ?? [])
-              .map((m) => ({day: m.day, start_min: m.start_min, end_min: m.end_min, mode: m.mode, building_id: m.building_id})),
-          })),
-      };
-    }),
+    courses: inputs.online === false ? withoutOnline(courses) : courses,
     walking_edges: rows.edges.map((e) => ({from_building_id: e.from_building_id, to_building_id: e.to_building_id, minutes: e.minutes, bidirectional: e.bidirectional})),
   };
 }

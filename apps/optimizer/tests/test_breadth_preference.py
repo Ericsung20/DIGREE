@@ -66,3 +66,22 @@ def test_multiple_designations_are_a_union_not_an_intersection():
                                   is_required=False, breadth=["N"], requirement_fit=0.8))
     results = run(body, SearchLimits(max_optional_courses=2)).results
     assert {result.selected[-1].course_id for result in results} == {"other", "preferred"}
+
+
+def test_catalog_search_uses_the_whole_pool_without_designations():
+    required = course("required", [bundle("required-A", [meeting("MON", 600, 650)])])
+    early = [
+        course(f"a-{i:02}", [bundle(f"a-{i:02}-A", [meeting("TUE", 600 + i, 650 + i)])], is_required=False)
+        for i in range(25)
+    ]
+    late = [
+        course("z-1", [bundle("z-1-A", [meeting("MON", 660, 710)])], is_required=False),
+        course("z-2", [bundle("z-2-A", [meeting("MON", 720, 770)])], is_required=False),
+    ]
+    body = request([required, *early, *late], min_credits=9, max_credits=9, weights={"campus_days": 1})
+    # Without catalog search the shortlist stops at the first two optional courses.
+    shortlisted = run(body, SearchLimits(max_optional_courses=2))
+    assert all("z-1" not in [item.course_id for item in r.selected] for r in shortlisted.results)
+    body["preferences"]["catalog_search"] = True
+    response = run(body, SearchLimits(max_optional_courses=2))
+    assert [item.course_id for item in response.results[0].selected] == ["required", "z-1", "z-2"]

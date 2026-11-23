@@ -11,6 +11,8 @@ const social = {id: 'uw-030001', code: 'SOC 101', credit_options: [3], repeatabl
 const laterBreadths = Array.from({length: 750}, (_, index) => ({
   id: `qa-breadth-${index}`, code: `QA ${index + 100}`, credit_options: [3], repeatable: false, breadth: ['S'],
 }));
+// One section per course: the must-takes on Monday and Tuesday, everything else on Wednesday.
+const sectionDay = (id: string) => (id === cs200.id ? 'MON' : id === stat.id ? 'TUE' : 'WED');
 
 test.each([
   {name: 'an unchecked planned course', planned: [cs200, cs400, stat], related: false, preferred: [], maxMajor: null},
@@ -25,6 +27,7 @@ test.each([
   const hasBreadth = preferred.includes('S');
   const genEd = preferred.includes('COMM_B') || preferred.includes('ETHNIC');
   const catalog = [{...cs400, breadth: ['S']}, social, ...(hasBreadth ? laterBreadths : [])];
+  const offered = [cs200, stat, ...catalog];
   const db = {
     auth: {getUser: async () => ({data: {user: {id: 'qa-user'}}})},
     from: (table: string) => ({
@@ -33,8 +36,11 @@ test.each([
         if (table === 'courses') {
           data = columns.includes('section_bundles')
             ? preferred.length ? catalog.map(row => published ? {...row, breadth: null} : row) : [cs400]
-            : planned;
+            : [...planned, ...offered.filter((row) => !planned.includes(row))].map(row => published && row !== cs200 && row !== stat ? {...row, breadth: null} : row);
         }
+        if (table === 'section_bundles') data = offered.map(({id}) => ({course_id: id, bundle_id: `${id}-A`, seat_status: 'open', instructor_score: null}));
+        if (table === 'meetings') data = offered.map(({id}) => ({course_id: id, bundle_id: `${id}-A`, day: sectionDay(id), start_min: 600, end_min: 650, mode: 'in_person', building_id: null}));
+        if (table === 'course_grade_stats') data = [{course_id: social.id, a_ab_rate: 0.9, sample_size: 300}];
         if (table === 'planner_courses' && columns === 'course_id, counts_toward_major') {
           data = planned.map(({id}) => ({course_id: id, counts_toward_major: false}));
         }
@@ -76,13 +82,18 @@ test.each([
   });
 
   if ('error' in result) throw new Error(result.error);
-  expect(result.courses.map(({course_id}) => course_id)).toEqual(preferred.length
-    ? [cs200.id, stat.id, social.id, ...(hasBreadth ? laterBreadths.map(({id}) => id) : [])] : [cs200.id, stat.id]);
+  // DIG scans every course of the term: COMP SCI 400 is offered but its requisite is missing, so it never goes.
+  const ids = result.courses.map(({course_id}) => course_id);
+  expect(ids).not.toContain(cs400.id);
+  expect(ids.slice(0, 3)).toEqual([cs200.id, stat.id, social.id]); // must-takes, then the best-graded match
+  expect(ids.length).toBe(2 + (hasBreadth ? 250 : 1)); // every candidate up to 250, searched whole by the optimizer
+  expect(result.preferences.catalog_search).toBe(true);
+  expect(result.preferences.weights.degree_fit).toBeGreaterThan(0);
+  expect(result.courses.find((course) => course.course_id === social.id)?.requirement_fit).toBe(preferred.length ? 0.8 : 0);
   if (preferred.length) {
     expect(result.preferences.preferred_breadths).toEqual(preferred);
-    expect(result.preferences.catalog_search).toBe(true);
     expect(result.courses.find(course => course.course_id === social.id)?.breadth).toEqual(['S', ...preferred.filter((code) => code !== 'S')]);
-    if (hasBreadth) expect(result.courses.find(course => course.course_id === laterBreadths.at(-1)?.id)?.breadth).toEqual(['S']);
+    if (hasBreadth) expect(result.courses[3].breadth).toEqual(['S']);
   }
   expect(result.courses.filter(course => !course.course_id.startsWith('qa-'))
     .every(course => course.eligibility_status === 'eligible')).toBe(true);

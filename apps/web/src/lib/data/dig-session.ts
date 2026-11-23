@@ -22,7 +22,8 @@ export function useDigConditions(): DigConditions {
       majorPreference: stored.majorPreference === 'none' || stored.majorPreference === 'balanced' ? stored.majorPreference
         : typeof stored.majorPreference === 'number' && Number.isInteger(stored.majorPreference) && stored.majorPreference >= 0 && stored.majorPreference <= 6 ? stored.majorPreference
         : typeof stored.maxMajorCourses === 'number' && Number.isInteger(stored.maxMajorCourses) && stored.maxMajorCourses >= 0 && stored.maxMajorCourses <= 6 ? stored.maxMajorCourses : 'balanced',
-      breadths: Array.isArray(stored.breadths) ? stored.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code)) : []}
+      breadths: Array.isArray(stored.breadths) ? stored.breadths.filter((code) => BREADTH_OPTIONS.some((option) => option.code === code)) : [],
+      online: stored.online !== false}
     : DEFAULT_CONDITIONS;
 }
 export const saveDigConditions = (conditions: DigConditions) => writeStore(CONDITIONS, conditions);

@@ -103,6 +103,7 @@ components:
         already_completed: {type: boolean}
         repeatable: {type: boolean}
         requirement_fit: {type: number, minimum: 0, maximum: 1, nullable: true}
+        known_easy: {type: number, minimum: 0, maximum: 1, description: 'How strongly students recommend the course as an easy one, 0 to 1; 0 or absent means no word either way'}
         breadth:
           type: array
           nullable: true
@@ -144,6 +145,7 @@ components:
         instructor: {type: number, minimum: 0, maximum: 1}
         breadth: {type: number, minimum: 0, maximum: 1, description: 'Preference for optional courses matching any selected designation'}
         major_balance: {type: number, minimum: 0, maximum: 1, description: 'Soft preference for schedules with 2–4 major courses; zero is neutral'}
+        known_easy: {type: number, minimum: 0, maximum: 1, description: 'Soft preference for added courses students recommend as easy (CandidateCourse.known_easy)'}
     Preferences:
       type: object
       additionalProperties: false
@@ -159,6 +161,9 @@ components:
         catalog_search:
           type: boolean
           description: 'Use the full candidate pool and a larger search budget when breadth preferences are set'
+        prefer_max_credits:
+          type: boolean
+          description: 'Rank schedules closer to max_credits first, before the score'
     WalkingEdge:
       type: object
       additionalProperties: false

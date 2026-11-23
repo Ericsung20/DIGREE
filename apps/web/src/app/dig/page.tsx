@@ -7,7 +7,7 @@ import {AvatarLink, Frame, ICON, Spade, Svg, TabBar} from '@/components/dg';
 import {useCourseDetails, useTerms} from '@/lib/data/catalog';
 import {removeCourseRecord, useCourseRecords} from '@/lib/data/course-records';
 import {digTerm, saveDigConditions, startDig, useDigConditions, type MustTake} from '@/lib/data/dig-session';
-import {CREDIT_LIMIT, type DigConditions} from '@/lib/dig-view';
+import {CREDIT_LIMIT, EARLIEST_RANGE, LATEST_RANGE, type DigConditions} from '@/lib/dig-view';
 import {BREADTH_OPTIONS} from '@/lib/breadth';
 import {IS_MOCK} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
@@ -34,7 +34,11 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 `;
 
 const HOUR_BUTTON = 'position: relative; flex: 1; height: 52px; border: none; border-radius: 18px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.08); color: #1D1B1A; font-size: 18px; font-weight: 900; cursor: pointer; display: flex; align-items: center; justify-content: center';
-const hours = (from: number, to: number) => Array.from({length: to - from + 1}, (_, i) => (from + i) * 60);
+const hours = ({from, to}: {from: number; to: number}, selected: number) => [...new Set([
+  ...Array.from({length: (to - from) / 60 + 1}, (_, i) => from + i * 60),
+  // A result's "loosen one" action can choose a half-hour such as 5:30 PM.
+  ...(selected >= from && selected <= to ? [selected] : []),
+])].sort((a, b) => a - b);
 // Sample mode sends the shared fixture, so its required courses are the must-takes until the user adds their own.
 const SAMPLE: MustTake[] = fixture.courses.filter((course) => course.is_required).map((course) => ({id: course.course_id, code: course.course_code, credits: course.credit_options[0]}));
 
@@ -62,7 +66,8 @@ function GenerateSetup() {
   const fill = Math.max(0, credits - mustCredits);
   const mustPct = Math.round((Math.min(mustCredits, credits) / credits) * 100);
   const update = (change: Partial<DigConditions>) => saveDigConditions({...conditions, ...change});
-  const ready = mustTake.length > 0 && mustCredits <= CREDIT_LIMIT && !!term;
+  // With no must-take course DIG picks every course itself.
+  const ready = mustCredits <= CREDIT_LIMIT && !!term;
 
   function dig() {
     startDig({term, termLabel, conditions: {...conditions, credits}, mustTake: mustTake.map(({id, code, credits: courseCredits}) => ({id, code, credits: courseCredits})), mock: params.get('mock')});
@@ -96,6 +101,7 @@ function GenerateSetup() {
                 </button>
               </span>
             ))}
+            {mustTake.length === 0 && <span style={s('height: 40px; display: inline-flex; align-items: center; color: #6E6863; font-size: 13px; font-weight: 700')}>None. DIG picks every course.</span>}
             <Link href={`/schedule/add?term=${encodeURIComponent(term)}&for=dig`} className="press" style={s('height: 40px; padding: 0 14px; box-sizing: border-box; border-radius: 20px; border: 2px dashed #C9C3BC; background: transparent; color: #5F5A55; font-size: 14px; font-weight: 800; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; text-decoration: none')}>
               <Svg size={14} sw={2.8} join={false}>{ICON.plus}</Svg>Add
             </Link>
@@ -140,18 +146,36 @@ function GenerateSetup() {
           <div style={s('display: flex; align-items: center; gap: 10px')}>
             <label className="press" style={s(HOUR_BUTTON)}>
               {hourLabel(conditions.earliest)}
-              <select className="dg-native" aria-label={`Earliest start, ${hourLabel(conditions.earliest)}`} value={conditions.earliest} onChange={(event) => update({earliest: Number(event.target.value)})}>
-                {hours(7, 12).map((minute) => <option key={minute} value={minute}>{hourLabel(minute)}</option>)}
+              <select className="dg-native" aria-label={`Earliest start, ${hourLabel(conditions.earliest)}`} value={conditions.earliest} onChange={(event) => {
+                const earliest = Number(event.target.value);
+                // Keep the window at least an hour long by pushing the end later when needed.
+                update({earliest, latest: Math.max(conditions.latest, Math.min(LATEST_RANGE.to, earliest + 60))});
+              }}>
+                {hours(EARLIEST_RANGE, conditions.earliest).map((minute) => <option key={minute} value={minute}>{hourLabel(minute)}</option>)}
               </select>
             </label>
             <span aria-hidden="true" style={s('width: 18px; height: 3px; border-radius: 2px; background: #C9C3BC')} />
             <label className="press" style={s(HOUR_BUTTON)}>
               {hourLabel(conditions.latest)}
-              <select className="dg-native" aria-label={`Latest end, ${hourLabel(conditions.latest)}`} value={conditions.latest} onChange={(event) => update({latest: Number(event.target.value)})}>
-                {hours(13, 22).map((minute) => <option key={minute} value={minute}>{hourLabel(minute)}</option>)}
+              <select className="dg-native" aria-label={`Latest end, ${hourLabel(conditions.latest)}`} value={conditions.latest} onChange={(event) => {
+                const latest = Number(event.target.value);
+                update({latest, earliest: Math.min(conditions.earliest, Math.max(EARLIEST_RANGE.from, latest - 60))});
+              }}>
+                {hours(LATEST_RANGE, conditions.latest).map((minute) => <option key={minute} value={minute}>{hourLabel(minute)}</option>)}
               </select>
             </label>
           </div>
+        </section>
+
+        <section className="rise" style={s('display: flex; flex-direction: column; gap: 8px; animation-delay: 270ms')}>
+          <div style={s('height: 52px; padding: 0 8px 0 14px; border-radius: 18px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,.08); display: flex; align-items: center; gap: 8px')}>
+            <span id="online-label" style={s('flex: 1; font-size: 15px; font-weight: 800')}>Online classes</span>
+            <button type="button" role="switch" aria-checked={conditions.online} aria-labelledby="online-label" className="press" onClick={() => update({online: !conditions.online})}
+              style={s(`position: relative; width: 52px; height: 32px; border: none; border-radius: 16px; cursor: pointer; padding: 0; transition: background 220ms ease; background: ${conditions.online ? '#1D1B1A' : '#D6D0C9'}`)}>
+              <span aria-hidden="true" style={s(`position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 13px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform 220ms cubic-bezier(.2,.9,.25,1.2); transform: translateX(${conditions.online ? 20 : 0}px)`)} />
+            </button>
+          </div>
+          <span style={s('padding-left: 2px; color: #8A847E; font-size: 11px; font-weight: 700')}>{conditions.online ? 'DIG may include online and asynchronous sections.' : 'In-person sections only. A must-take that is only offered online stays.'}</span>
         </section>
 
         <section className="rise" style={s('display: flex; flex-direction: column; gap: 8px; animation-delay: 300ms')}>
@@ -160,9 +184,9 @@ function GenerateSetup() {
             <span style={s('flex: 1; color: #5F5A55; font-size: 13px; font-weight: 700')}>How many?</span>
             <select id="major-cap" aria-label="Major course preference" value={conditions.majorPreference} onChange={(event) => update({majorPreference: event.target.value === 'balanced' || event.target.value === 'none' ? event.target.value : Number(event.target.value)})}
               style={s('max-width: 168px; border: 0; background: transparent; color: #1D1B1A; font-size: 14px; font-weight: 900; text-align: right; outline-offset: 4px; cursor: pointer')}>
+              {Array.from({length: 7}, (_, count) => <option key={count} value={count}>{count}</option>)}
               <option value="balanced">Balanced (2–4)</option>
               <option value="none">No preference</option>
-              {Array.from({length: 7}, (_, count) => <option key={count} value={count}>At most {count}</option>)}
             </select>
           </div>
           <span style={s('padding-left: 2px; color: #8A847E; font-size: 11px; font-weight: 700')}>{conditions.majorPreference === 'balanced' ? 'A gentle preference based on your timetable.' : conditions.majorPreference === 'none' ? 'Major course count will not affect recommendations.' : 'A firm maximum, including must-take courses.'}</span>

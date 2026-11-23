@@ -11,7 +11,7 @@ import {savePlannedSchedule} from '@/lib/data/saved-schedules';
 import {campusDays, describeOptions} from '@/lib/dig-view';
 import {IS_MOCK} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
-import {WEEKDAYS, plural, shortCode, shortPlace} from '@/lib/ui/format';
+import {WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
 import {DIG_TONES} from '@/lib/ui/palette';
 
 const CSS = `
@@ -28,6 +28,9 @@ a{color:#8C1D2B}a:hover{color:#6F1622}
 `;
 
 const H = 48;
+const sectionTimes = (meetings: Parameters<typeof meetingSummary>[0]) => meetings.length ? meetingSummary(meetings, ' ') : 'Online, no set time';
+const hoursBetween = (minutes: number) => (minutes < 60 ? `${minutes} min` : `${Math.round(minutes / 30) / 2} h`);
+const ROUND = (on: boolean) => `width: 44px; height: 44px; flex-shrink: 0; border: none; border-radius: 22px; display: flex; align-items: center; justify-content: center; cursor: ${on ? 'pointer' : 'default'}; ${on ? 'background: #1D1B1A; color: #FFFFFF' : 'background: #ECE8E3; color: #A59D94'}`;
 const PLANTING_MS = 900; // the spade digs for at least this long before the button says "Planted"
 type Phase = 'idle' | 'planting' | 'saved';
 
@@ -39,6 +42,8 @@ function SchedulePreview() {
   const term = run?.term ?? digTerm(terms, params.get('term'));
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
+  // Which timetable of the option on screen is shown: 0 is DIG's pick.
+  const [shown, setShown] = useState<{rank: number | null; index: number}>({rank: null, index: 0});
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
@@ -60,7 +65,23 @@ function SchedulePreview() {
 
   const order = [...required, ...results.flatMap((result) => result.selected.map((entry) => entry.course_id))].filter((id, i, all) => all.indexOf(id) === i);
   const tone = (courseId: string) => DIG_TONES[order.indexOf(courseId) % DIG_TONES.length];
-  const selected = option?.result.selected ?? [];
+  const choices = run?.data?.sections ?? {};
+  const pages = option ? run?.data?.timetables?.[option.rank] : undefined;
+  const timetables = pages?.options ?? [];
+  const index = shown.rank === option?.rank ? Math.min(shown.index, Math.max(0, timetables.length - 1)) : 0;
+  const timetable = timetables[index];
+  const selected = (option?.result.selected ?? []).map((entry, i) => {
+    const id = timetable?.bundles[i];
+    const other = id && id !== entry.bundle_id ? choices[entry.course_id]?.find((section) => section.bundle_id === id) : undefined;
+    return other ? {...entry, bundle_id: other.bundle_id, meetings: other.meetings} : entry;
+  });
+  const walkText = index === 0 || !timetable ? (option?.walk ? `${option.walk} max walk` : 'walking time unverified') : timetable.maxWalk === null ? 'walking time unverified' : `${timetable.maxWalk} min max walk`;
+  const go = (next: number) => {
+    if (!option || next < 0 || next >= timetables.length) return;
+    setShown({rank: option.rank, index: next});
+    setPhase('idle');
+    setError(null);
+  };
   const {start, end} = gridHours(selected.flatMap((entry) => entry.meetings));
   const off = run ? run.conditions.days.flatMap((on, day) => (on ? [] : [day])) : [];
   const blocks = WEEKDAYS.flatMap((day) => selected.flatMap((entry) => entry.meetings.filter((meeting) => meeting.day === day).map((meeting) => ({entry, meeting, day}))));
@@ -76,7 +97,7 @@ function SchedulePreview() {
       const planted = new Promise<void>((resolve) => {
         timer.current = window.setTimeout(resolve, PLANTING_MS);
       });
-      await Promise.all([savePlannedSchedule({term: run.term, selected: option.result.selected}, run.data.request_id), planted]);
+      await Promise.all([savePlannedSchedule({term: run.term, selected}, run.data.request_id), planted]);
       setPhase('saved');
     } catch {
       setPhase('idle');
@@ -93,7 +114,7 @@ function SchedulePreview() {
         </div>
         <div style={s('padding-left: 10px; display: flex; flex-direction: column; gap: 4px')}>
           <h1 style={s('margin: 0; font-size: 32px; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1')}>{run ? `${run.termLabel} plan` : ' '}</h1>
-          <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{option ? `${plural(option.credits, 'credit')} · ${campusDays(option.result)} · ${option.walk ? `${option.walk} max walk` : 'walking time unverified'}` : ' '}</span>
+          <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{option ? `${plural(option.credits, 'credit')} · ${campusDays({...option.result, selected})} · ${walkText}` : ' '}</span>
         </div>
       </header>
 
@@ -108,7 +129,7 @@ function SchedulePreview() {
                 const added = !required.includes(block.entry.course_id);
                 const place = block.meeting.building_id ? names[block.meeting.building_id] ?? block.meeting.building_id : block.meeting.mode === 'online_sync' ? 'Online' : '';
                 return (
-                  <div key={`${block.entry.course_id}-${block.meeting.start_min}`} style={s(`position: absolute; left: 3px; right: 3px; top: ${(block.meeting.start_min / 60 - start) * H}px; height: ${((block.meeting.end_min - block.meeting.start_min) / 60) * H - 3}px; box-sizing: border-box; padding: 5px 7px; border-radius: 12px; color: ${c.fg}; overflow: hidden; animation: drop 620ms cubic-bezier(.2,.9,.25,1) both; animation-delay: ${160 + blocks.indexOf(block) * 70}ms; ${added ? `background: ${c.light}; border: 1.5px dashed ${c.fg}` : `background: ${c.bg}`}`)}>
+                  <div key={`${block.entry.bundle_id}-${block.meeting.day}-${block.meeting.start_min}`} style={s(`position: absolute; left: 3px; right: 3px; top: ${(block.meeting.start_min / 60 - start) * H}px; height: ${((block.meeting.end_min - block.meeting.start_min) / 60) * H - 3}px; box-sizing: border-box; padding: 5px 7px; border-radius: 12px; color: ${c.fg}; overflow: hidden; animation: drop 620ms cubic-bezier(.2,.9,.25,1) both; animation-delay: ${160 + blocks.indexOf(block) * 70}ms; ${added ? `background: ${c.light}; border: 1.5px dashed ${c.fg}` : `background: ${c.bg}`}`)}>
                     <span style={s('display: block; font-size: 12px; font-weight: 900; line-height: 1.2')}>{shortCode(block.entry.course_code)}</span>
                     <span style={s('display: block; font-size: 11px; font-weight: 600; line-height: 1.25; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{shortPlace(place)}</span>
                   </div>
@@ -121,6 +142,32 @@ function SchedulePreview() {
           <span aria-hidden="true" style={s('width: 22px; height: 14px; box-sizing: border-box; border-radius: 4px; border: 1.5px dashed #8A847E')} />
           Dashed = dug up by DIG
         </div>
+
+        {selected.length > 0 && (
+          <section aria-label="Timetables" style={s('margin: 6px 0 0 8px; display: flex; flex-direction: column; gap: 8px')}>
+            {timetables.length > 1 && (
+              <div style={s('height: 56px; padding: 0 6px; border-radius: 20px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06); display: flex; align-items: center; gap: 8px')}>
+                <button type="button" className="press" aria-label="Previous timetable" disabled={index === 0} onClick={() => go(index - 1)} style={s(ROUND(index > 0))}><Svg size={20} sw={2.8}><path d="m15 18-6-6 6-6" /></Svg></button>
+                <div aria-live="polite" style={s('flex: 1; display: flex; flex-direction: column; align-items: center')}>
+                  <span style={s('font-size: 15px; font-weight: 900')}>Timetable {index + 1} of {timetables.length}</span>
+                  <span style={s('font-size: 12px; font-weight: 700; color: #6E6863')}>{index === 0 ? 'DIG’s pick' : `${plural(timetable.campusDays, 'day')} on campus · ${hoursBetween(timetable.idleMinutes)} between classes`}</span>
+                </div>
+                <button type="button" className="press" aria-label="Next timetable" disabled={index >= timetables.length - 1} onClick={() => go(index + 1)} style={s(ROUND(index < timetables.length - 1))}><Svg size={20} sw={2.8}>{ICON.right}</Svg></button>
+              </div>
+            )}
+            {timetables.length === 1 && <span style={s('padding: 0 4px; font-size: 13px; font-weight: 700; color: #6E6863')}>This is the only timetable these courses fit into.</span>}
+            {selected.map((entry) => {
+              const c = tone(entry.course_id);
+              return (
+                <div key={entry.course_id} style={s('min-height: 46px; padding: 8px 14px; box-sizing: border-box; border-radius: 16px; background: #FFFFFF; box-shadow: 0 1px 3px rgba(40,20,20,0.06); display: flex; align-items: center; gap: 10px')}>
+                  <span aria-hidden="true" style={s(`width: 12px; height: 12px; border-radius: 6px; flex-shrink: 0; background: ${c.bg}; border: 1.5px solid ${c.fg}`)} />
+                  <span style={s('flex-shrink: 0; font-size: 14px; font-weight: 900')}>{shortCode(entry.course_code)}</span>
+                  <span style={s('flex: 1; min-width: 0; text-align: right; font-size: 13px; font-weight: 700; color: #5F5A55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{sectionTimes(entry.meetings)}</span>
+                </div>
+              );
+            })}
+          </section>
+        )}
       </main>
 
       <div style={s('flex-shrink: 0; padding: 10px 20px 26px; display: flex; flex-direction: column; align-items: center; gap: 10px; background: #FFFFFF; border-radius: 28px 28px 0 0; box-shadow: 0 -6px 24px rgba(40,20,20,0.06)')}>
