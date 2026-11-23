@@ -4,10 +4,12 @@ import Link from 'next/link';
 import {useRouter, useSearchParams} from 'next/navigation';
 import {Suspense, useEffect, useRef, useState} from 'react';
 import {BackLink, Frame, ICON, Spade, Svg} from '@/components/dg';
+import {Sheet} from '@/components/sheet';
+import {PreviewClassDetails, type PreviewClass} from '@/components/preview-class-details';
 import {DayHeads, HourAxis, dayColumn, gridHours} from '@/components/week';
 import {currentTermOf, useBuildingNames, useTerms} from '@/lib/data/catalog';
 import {digTerm, useDigRun} from '@/lib/data/dig-session';
-import {savePlannedSchedule} from '@/lib/data/saved-schedules';
+import {deletePlannedSchedule, planLabel, PlanLimitError, PLAN_LIMIT, savePlannedSchedule, usePlannedScheduleState, type StoredPlan} from '@/lib/data/saved-schedules';
 import {campusDays, describeOptions} from '@/lib/dig-view';
 import {IS_MOCK} from '@/lib/supabase';
 import {s} from '@/lib/ui/css';
@@ -43,6 +45,11 @@ function SchedulePreview() {
   const term = run?.term ?? digTerm(terms, params.get('term'));
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [classDetail, setClassDetail] = useState<PreviewClass | null>(null);
+  const [planLimit, setPlanLimit] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const savedPlans = usePlannedScheduleState(term);
+  const saving = useRef(false);
   // Which timetable of the option on screen is shown: 0 is DIG's pick.
   const [shown, setShown] = useState<{rank: number | null; index: number}>({rank: null, index: 0});
   const timer = useRef<number | undefined>(undefined);
@@ -80,6 +87,7 @@ function SchedulePreview() {
   const go = (next: number) => {
     if (!option || next < 0 || next >= timetables.length) return;
     setShown({rank: option.rank, index: next});
+    setClassDetail(null);
     setPhase('idle');
     setError(null);
   };
@@ -89,8 +97,10 @@ function SchedulePreview() {
   const currentLabel = terms.find((item) => item.id === currentTermOf(terms))?.label;
 
   async function save() {
-    if (phase !== 'idle' || !run?.data || !option) return;
+    if (saving.current || phase !== 'idle' || !run?.data || !option) return;
     if (run.data.sample && !IS_MOCK) return setError('Sample results can’t be saved to your account.');
+    if (savedPlans.plans.length >= PLAN_LIMIT) {setPlanLimit(true); return;}
+    saving.current = true;
     setPhase('planting');
     setError(null);
     try {
@@ -98,13 +108,22 @@ function SchedulePreview() {
       const planted = new Promise<void>((resolve) => {
         timer.current = window.setTimeout(resolve, PLANTING_MS);
       });
-      await Promise.all([savePlannedSchedule({term: run.term, selected}, run.data.request_id), planted]);
+      const [id] = await Promise.all([savePlannedSchedule({term: run.term, selected}, run.data.request_id), planted]);
       setPhase('saved');
-      router.push(scheduleUrl('plans', run.term, currentTermOf(terms)));
+      router.push(scheduleUrl('plans', run.term, currentTermOf(terms), id));
     } catch (failure) {
       setPhase('idle');
+      if (failure instanceof PlanLimitError) {setPlanLimit(true); return;}
       setError(failure instanceof Error ? failure.message : 'Couldn’t save the plan. Try again.');
-    }
+    } finally {saving.current = false;}
+  }
+
+  async function deletePlan(plan: StoredPlan) {
+    if (deleting) return;
+    setDeleting(true); setError(null);
+    try {await deletePlannedSchedule(plan);}
+    catch {setError('Couldn’t delete the plan. Try again.');}
+    finally {setDeleting(false);}
   }
 
   return (
@@ -132,6 +151,7 @@ function SchedulePreview() {
                 const place = block.meeting.building_id ? names[block.meeting.building_id] ?? block.meeting.building_id : block.meeting.mode === 'online_sync' ? 'Online' : '';
                 return (
                   <div key={`${block.entry.bundle_id}-${block.meeting.day}-${block.meeting.start_min}`} style={s(`position: absolute; left: 3px; right: 3px; top: ${(block.meeting.start_min / 60 - start) * H}px; height: ${((block.meeting.end_min - block.meeting.start_min) / 60) * H - 3}px; box-sizing: border-box; padding: 5px 7px; border-radius: 12px; color: ${c.fg}; overflow: hidden; animation: drop 620ms cubic-bezier(.2,.9,.25,1) both; animation-delay: ${160 + blocks.indexOf(block) * 70}ms; ${added ? `background: ${c.light}; border: 1.5px dashed ${c.fg}` : `background: ${c.bg}`}`)}>
+                    <button type="button" aria-label={`${shortCode(block.entry.course_code)}, ${block.meeting.day}, ${sectionTimes([block.meeting])}`} onClick={() => setClassDetail({...block.entry, meeting: block.meeting})} style={s('position: absolute; inset: 0; z-index: 1; border: none; background: transparent; cursor: pointer')} />
                     <span style={s('display: block; font-size: 12px; font-weight: 900; line-height: 1.2')}>{shortCode(block.entry.course_code)}</span>
                     <span style={s('display: block; font-size: 11px; font-weight: 600; line-height: 1.25; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis')}>{shortPlace(place)}</span>
                   </div>
@@ -182,6 +202,18 @@ function SchedulePreview() {
           ? <Link href={`/?term=${encodeURIComponent(term)}&view=plans`} className="pop" style={s('min-height: 32px; display: flex; align-items: center; gap: 4px; font-size: 15px; font-weight: 800; color: #8C1D2B; text-decoration: none; animation-delay: 120ms')}>View in Schedule<Svg size={16} sw={2.8}>{ICON.arrow}</Svg></Link>
           : <span role={error ? 'alert' : undefined} style={s(`min-height: 32px; display: flex; align-items: center; font-size: 13px; font-weight: 700; color: ${error ? '#8C1D2B' : '#5F5A55'}`)}>{error ?? (currentLabel ? `Your enrolled ${currentLabel} schedule won’t change.` : 'Your enrolled schedule won’t change.')}</span>}
       </div>
+      {classDetail && <PreviewClassDetails key={`${term}:${classDetail.course_id}:${classDetail.bundle_id}:${classDetail.meeting.day}:${classDetail.meeting.start_min}`} term={term} entry={classDetail} onDismiss={() => setClassDetail(null)} />}
+      {planLimit && <Sheet title={savedPlans.plans.length >= PLAN_LIMIT ? '3 plans saved' : 'Ready to save'} onDismiss={() => setPlanLimit(false)}>
+        <p style={s('line-height: 1.5')}>{savedPlans.plans.length >= PLAN_LIMIT ? `You can keep up to 3 plans for ${run?.termLabel}. Delete one below to save this timetable.` : 'A plan slot is available. Save this timetable to keep it with your other plans.'}</p>
+        <div style={s('display: grid; gap: 10px')}>
+          {savedPlans.plans.map(plan => <div key={plan.id} style={s('background: #F7F5F2; padding: 12px; border-radius: 14px; display: flex; gap: 8px; align-items: center')}>
+            <span style={s('flex: 1; line-height: 1.5')}><strong>{planLabel(plan)}</strong> · {plan.selected.reduce((sum, item) => sum + item.credits, 0)} cr<br /><span style={s('font-size: 12px')}>{plan.selected.map(item => shortCode(item.course_code)).join(', ')}</span></span>
+            <button type="button" disabled={deleting} onClick={() => void deletePlan(plan)} style={s('min-height: 44px; border: none; padding: 10px; border-radius: 12px; color: #8C1D2B; font-weight: 800; cursor: pointer')}>Delete {planLabel(plan)}</button>
+          </div>)}
+        </div>
+        {error && <p role="alert">{error}</p>}
+        {savedPlans.plans.length < PLAN_LIMIT && <button type="button" disabled={deleting} onClick={() => {setPlanLimit(false); void save();}} style={s('margin-top: 16px; width: 100%; min-height: 48px; border: none; border-radius: 16px; background: #8C1D2B; color: white; font-weight: 800; cursor: pointer')}>Save this plan</button>}
+      </Sheet>}
     </Frame>
   );
 }

@@ -76,8 +76,12 @@ try {
   assert.equal(data(await owner.from('saved_schedules').select('id').eq('term', term).eq('state', 'active').single()).id, saved);
   const concurrent = await Promise.all(['a', 'b'].map(p_request_id => owner.rpc('save_schedule', {p_term: term, p_items: item, p_request_id})));
   concurrent.forEach(data);
-  assert.equal(data(await owner.from('saved_schedules').select('id').eq('term', term).eq('state', 'active')).length, 1);
-  ok('failed and concurrent schedule saves preserve exactly one complete active plan');
+  assert.equal(data(await owner.from('saved_schedules').select('id').eq('term', term).eq('state', 'active')).length, 3);
+  assert((await owner.rpc('save_schedule', {p_term: term, p_items: item, p_request_id: 'fourth'})).error);
+  data(await owner.rpc('archive_schedule', {p_schedule_id: saved}));
+  data(await owner.rpc('save_schedule', {p_term: term, p_items: item, p_request_id: 'replacement'}));
+  assert.equal(data(await owner.from('saved_schedules').select('id').eq('term', term).eq('state', 'active')).length, 3);
+  ok('concurrent saves enforce three plan slots and allow replacement after deletion');
   data(await owner.from('friendships').insert({requester_id: ids[0], receiver_id: ids[1], status: 'pending'}));
   assert.equal(data(await other.from('saved_schedules').select('*')).length, 0);
   data(await other.from('friendships').update({status: 'accepted'}).eq('requester_id', ids[0]));

@@ -12,4 +12,5 @@ test('saving navigates to the selected semester and preserves an explicit view',
   expect(scheduleUrl('plans', '1274', '1272')).toBe('/?term=1274&view=plans');
   expect(scheduleUrl('enrolled', '1274', '1272')).toBe('/?term=1274&view=enrolled');
   expect(scheduleUrl('enrolled', '1272', '1272')).toBe('/?view=enrolled');
+  expect(scheduleUrl('plans', '1274', '1272', 'saved-plan-2')).toBe('/?term=1274&view=plans&plan=saved-plan-2');
 });

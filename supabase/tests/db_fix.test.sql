@@ -52,8 +52,13 @@ select is((select count(*) from saved_schedules),1::bigint,'Failed save leaves n
 select throws_ok($$select save_schedule('2027SP','[{"course_id":"cs400","bundle_id":"cs400-A","credits":29}]','test-bad-credit')$$,'22023',null,'Invalid credit choice rejected');
 select throws_ok($$select save_schedule('2027SP','[{"course_id":"cs400","bundle_id":"cs400-A","credits":3},{"course_id":"cs400","bundle_id":"cs400-A","credits":3}]','test-duplicate')$$,'23505',null,'Same canonical course cannot occur twice');
 select lives_ok($$select save_schedule('2027SP','[{"course_id":"math234","bundle_id":"math234-A","credits":4}]','test-two')$$,'Second save succeeds');
-select is((select count(*) from saved_schedules where state='active'),1::bigint,'Second save still has only one active plan');
-select is((select count(*) from saved_schedules where state='archived'),1::bigint,'Previous plan preserved as archive');
+select is((select count(*) from saved_schedules where state='active'),2::bigint,'Second save preserves both active plans');
+select lives_ok($$select save_schedule('2027SP','[{"course_id":"math234","bundle_id":"math234-A","credits":4}]','test-three')$$,'Third plan succeeds');
+select throws_ok($$select save_schedule('2027SP','[{"course_id":"math234","bundle_id":"math234-A","credits":4}]','test-four')$$,'P0001',null,'Fourth active plan is rejected');
+select lives_ok($$select archive_schedule(id) from saved_schedules where plan_slot=2 and state='active'$$,'Owner can delete one saved plan');
+select is((select count(*) from saved_schedules where state='archived'),1::bigint,'Deleted plan is preserved as archive');
+select lives_ok($$select save_schedule('2027SP','[{"course_id":"math234","bundle_id":"math234-A","credits":4}]','replacement')$$,'A deleted plan slot can be reused');
+select is((select count(*) from saved_schedules where state='active'),3::bigint,'Three active plans remain after replacement');
 
 set local request.jwt.claim.sub='91000000-0000-0000-0000-000000000002';
 select is((select count(*) from transfer_credits),0::bigint,'Other account cannot read transfers');

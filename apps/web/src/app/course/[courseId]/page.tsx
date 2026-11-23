@@ -50,7 +50,7 @@ function CourseDetail() {
   const [now] = useState(() => Date.now());
 
   const records = useCourseRecords();
-  const plan = usePlannedSchedule(term);
+  const plan = usePlannedSchedule(term, params.get('plan'));
   const course = useCourseInfo(courseId);
   const record = records.find((item) => item.term === term && item.course_id === courseId && (item.status === 'enrolled_self_reported' || item.status === 'completed'));
   const planned = plan?.selected.find((item) => item.course_id === courseId);
@@ -72,7 +72,7 @@ function CourseDetail() {
   const parts = /^([A-Za-z]+)\s+(\S.*)$/.exec(label);
   const upcoming = term === currentTerm ? nextClass(meetings, now) : null;
   const termLabel = terms.find((item) => item.id === term)?.label ?? '';
-  const back = `/?term=${encodeURIComponent(term)}${plans ? '&view=plans' : ''}`;
+  const back = `/?term=${encodeURIComponent(term)}${plans ? `&view=plans${plan ? `&plan=${encodeURIComponent(plan.id)}` : ''}` : ''}`;
   const places = [...new Set(meetings.map((meeting) => (meeting.building_id ? buildings[meeting.building_id] ?? meeting.building_id : meeting.mode === 'online_sync' ? 'Online' : '')).filter(Boolean))];
 
   return (

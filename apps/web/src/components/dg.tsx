@@ -127,10 +127,10 @@ export function TabBar({active, digHover = false, extra = ''}: {active: Tab; dig
   };
   const dig = active === 'dig';
   return (
-    <nav aria-label="Main" style={s(`flex-shrink: 0; height: 74px; box-sizing: border-box; padding: 8px 10px 0; background: #FFFFFF; border-radius: 24px 24px 0 0; box-shadow: 0 -6px 24px rgba(40,20,20,0.06); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start; ${extra}`)}>
+    <nav aria-label="Main" style={s(`position: relative; z-index: 10; overflow: visible; flex-shrink: 0; height: 74px; box-sizing: border-box; padding: 8px 10px 0; background: #FFFFFF; border-radius: 24px 24px 0 0; box-shadow: 0 -6px 24px rgba(40,20,20,0.06); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start; ${extra}`)}>
       {tab('schedule')}
       {tab('gpa')}
-      <Link href="/dig" className={digHover ? 'dig press' : undefined} {...(dig ? {'aria-current': 'page' as const} : {})} aria-label={dig ? 'DIG' : 'DIG, build a schedule'} style={s('display: flex; justify-content: center; text-decoration: none')}>
+      <Link href="/dig" className={digHover ? 'dig press' : undefined} {...(dig ? {'aria-current': 'page' as const} : {})} aria-label={dig ? 'DIG' : 'DIG, build a schedule'} style={s('position: relative; z-index: 2; display: flex; justify-content: center; text-decoration: none')}>
         <span style={s(`width: 58px; height: 58px; margin-top: -24px; border-radius: 29px; background: #8C1D2B; color: #FFFFFF; box-shadow: ${dig ? '0 0 0 4px #F3D9DC, ' : ''}0 8px 20px rgba(140,29,43,0.32); display: flex; align-items: center; justify-content: center`)}>
           <Spade fill="#FFFFFF" style={`height: 30px; width: 12px${digHover ? '; transform-origin: 50% 90%' : ''}`} />
         </span>

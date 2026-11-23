@@ -8,7 +8,7 @@ import {DayHeads, HourAxis, dayColumn, gridHours} from '@/components/week';
 import {bundleKey, currentTermOf, useBuildingNames, useBundlesFor, useCourseDetails, useTerms, type Meeting} from '@/lib/data/catalog';
 import {usePosts} from '@/lib/data/community';
 import {useCourseRecords} from '@/lib/data/course-records';
-import {removePlannedCourse, usePlannedScheduleState} from '@/lib/data/saved-schedules';
+import {deletePlannedSchedule, planLabel, removePlannedCourse, usePlannedScheduleState, type StoredPlan} from '@/lib/data/saved-schedules';
 import {s} from '@/lib/ui/css';
 import {DAY_NAMES, WEEKDAYS, meetingSummary, plural, shortCode, shortPlace} from '@/lib/ui/format';
 import {TONES, useCourseTone, type Tone} from '@/lib/ui/palette';
@@ -46,6 +46,9 @@ function Schedule() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState(0);
+  const [planMenu, setPlanMenu] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [deletingPlan, setDeletingPlan] = useState(false);
   const busy = useRef(false);
 
   const terms = useTerms();
@@ -55,7 +58,7 @@ function Schedule() {
   const termLabel = terms.find((item) => item.id === term)?.label ?? '';
   const records = useCourseRecords();
   const planState = usePlannedScheduleState(term);
-  const plan = planState.plan;
+  const plan = planState.plans.find(item => item.id === params.get('plan')) ?? planState.plans[0] ?? null;
   const toneOf = useCourseTone();
   const posts = usePosts();
 
@@ -80,9 +83,9 @@ function Schedule() {
   const buildings = useBuildingNames(entries.flatMap((entry) => entry.meetings.flatMap((meeting) => (meeting.building_id ? [meeting.building_id] : []))));
   const place = (meeting: Meeting) => (meeting.building_id ? buildings[meeting.building_id] ?? meeting.building_id : meeting.mode === 'online_sync' ? 'Online' : '');
 
-  const go = (nextView: View, nextTerm: string) => {
+  const go = (nextView: View, nextTerm: string, planId?: string) => {
     setOpen(false);
-    router.replace(scheduleUrl(nextView, nextTerm, currentTerm), {scroll: false});
+    router.replace(scheduleUrl(nextView, nextTerm, currentTerm, planId), {scroll: false});
   };
 
   const onGrid = (meeting: Meeting) => (WEEKDAYS as string[]).includes(meeting.day);
@@ -96,7 +99,17 @@ function Schedule() {
   const c = entries[Math.min(sel, entries.length - 1)];
   const selected = c ? entries.indexOf(c) : -1;
   const postCount = c ? posts.filter((post) => post.course_id === c.course_id && !post.reported).length : 0;
-  const query = `term=${encodeURIComponent(term)}`;
+  const query = `term=${encodeURIComponent(term)}${view === 'plans' && plan ? `&plan=${encodeURIComponent(plan.id)}` : ''}`;
+
+  async function deletePlan(target: StoredPlan) {
+    if (deletingPlan) return;
+    setDeletingPlan(true); setPlanError(null);
+    try {
+      await deletePlannedSchedule(target);
+      if (plan?.id === target.id) go('plans', term, planState.plans.find(item => item.id !== target.id)?.id);
+    } catch {setPlanError('Couldn’t delete the plan. Try again.');}
+    finally {setDeletingPlan(false);}
+  }
 
   async function removeFromPlan() {
     if (!plan || !c || busy.current) return;
@@ -113,7 +126,7 @@ function Schedule() {
 
   return (
     <Frame css={CSS} numeric>
-      <header style={s('flex-shrink: 0; padding: 12px 20px 0; display: flex; flex-direction: column; gap: 14px; animation: fadeUp 420ms ease both')}>
+      <header style={s('position: relative; z-index: 5; flex-shrink: 0; padding: 12px 20px 0; display: flex; flex-direction: column; gap: 14px; animation: fadeUp 420ms ease both')}>
         <div style={s('display: flex; align-items: center; justify-content: space-between; height: 44px')}>
           <Wordmark className="home-wordmark" animatedMark style="font-size: 28px; font-weight: 900; letter-spacing: -0.035em; line-height: 1; color: #1D1B1A" />
           <div style={s('display: flex; align-items: center; gap: 2px')}>
@@ -140,13 +153,26 @@ function Schedule() {
         <div style={s('display: flex; align-items: center; justify-content: space-between')}>
           <div role="tablist" aria-label="Schedule view" style={s('display: flex; gap: 6px')}>
             <button type="button" role="tab" aria-selected={view === 'enrolled'} onClick={() => go('enrolled', term)} style={s(TAB + (view === 'enrolled' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Enrolled</button>
-            <button type="button" role="tab" aria-selected={view === 'plans'} onClick={() => go('plans', term)} style={s(TAB + (view === 'plans' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Plans · {planState.loading ? '…' : plan ? 1 : 0}</button>
+            <div style={s('position: relative')}>
+              <button type="button" role="tab" aria-selected={view === 'plans'} aria-haspopup="menu" aria-expanded={planMenu} onClick={() => {setPlanMenu(!planMenu); go('plans', term, plan?.id);}} style={s(TAB + (view === 'plans' ? 'background: #1D1B1A; color: #FFFFFF; font-weight: 800' : 'background: transparent; color: #5F5A55; font-weight: 700'))}>Plans · {planState.loading ? '…' : planState.plans.length} ▾</button>
+              {planMenu && <div role="menu" aria-label="Saved plans" onKeyDown={event => {if (event.key === 'Escape') setPlanMenu(false);}} style={s('position: absolute; left: 0; top: 42px; z-index: 15; min-width: 220px; padding: 8px; border-radius: 18px; background: #FFFFFF; box-shadow: 0 12px 32px #28141433; display: grid; gap: 4px')}>
+                {planState.plans.map(item => <div key={item.id} style={s('display: flex; gap: 6px; align-items: center')}>
+                  <button type="button" role="menuitem" onClick={() => {go('plans', term, item.id); setPlanMenu(false);}} style={s(`flex: 1; min-height: 44px; border: none; border-radius: 12px; text-align: left; padding: 10px; font-weight: 800; cursor: pointer; background: ${item.id === plan?.id ? '#F3D9DC' : '#F7F5F2'}`)}>{planLabel(item)} · {item.selected.reduce((sum, entry) => sum + entry.credits, 0)} cr</button>
+                  <button type="button" role="menuitem" aria-label={`Delete ${planLabel(item)}`} disabled={deletingPlan} onClick={() => void deletePlan(item)} style={s('min-height: 44px; border: none; border-radius: 12px; padding: 8px; background: #F7F5F2; color: #8C1D2B; font-weight: 800; cursor: pointer')}>Delete</button>
+                </div>)}
+                {!planState.plans.length && <span style={s('padding: 10px; font-size: 13px')}>{planState.loading ? 'Loading plans…' : 'No saved plans yet.'}</span>}
+                {planError && <span role="alert" style={s('padding: 8px; font-size: 13px; color: #8C1D2B')}>{planError}</span>}
+                <button type="button" role="menuitem" onClick={() => setPlanMenu(false)} style={s('min-height: 36px; border: none; background: transparent; color: #5F5A55; cursor: pointer')}>Close</button>
+              </div>}
+            </div>
           </div>
           <span style={s('font-size: 14px; font-weight: 700; color: #5F5A55')}>{plural(entries.reduce((total, entry) => total + entry.credits, 0), 'credit')}</span>
         </div>
       </header>
 
-      <main style={s('flex: 1; min-height: 0; overflow: auto; padding: 14px 14px 12px 6px')}>
+      <main onPointerDown={() => setPlanMenu(false)} style={s('flex: 1; min-height: 0; overflow: auto; padding: 14px 14px 12px 6px')}>
+        {view === 'plans' && plan && <div style={s('display: flex; justify-content: space-between; align-items: center; padding: 0 12px 12px 30px')}><strong>{planLabel(plan)}</strong><button type="button" disabled={deletingPlan} onClick={() => void deletePlan(plan)} style={s('min-height: 36px; border: none; background: transparent; color: #8C1D2B; font-weight: 800; cursor: pointer')}>Delete plan</button></div>}
+        {planError && <EmptyNote role="alert">{planError}</EmptyNote>}
         <DayHeads />
         <div style={s('display: flex')}>
           <HourAxis start={start} end={end} H={H} />

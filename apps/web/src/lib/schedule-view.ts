@@ -9,10 +9,11 @@ export function scheduleView(requested: string | null, term: string, current: st
   return now >= 0 && selected > now ? 'plans' : 'enrolled';
 }
 
-export function scheduleUrl(view: ScheduleView, term: string, current: string | null): string {
+export function scheduleUrl(view: ScheduleView, term: string, current: string | null, planId?: string): string {
   const query = new URLSearchParams();
   if (term && term !== current) query.set('term', term);
   // Preserve explicit enrollment even in a future semester.
   query.set('view', view);
+  if (view === 'plans' && planId) query.set('plan', planId);
   return `/?${query}`;
 }

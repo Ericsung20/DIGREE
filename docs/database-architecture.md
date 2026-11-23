@@ -15,7 +15,7 @@ The existing hosted project is **shared development** by team choice. No new clo
 | Programs | `program_versions`, `student_programs` | Versioned major/minor/certificate catalog plus an owner-filtered unified selection view over existing profile writes |
 | Requirements | `requirement_groups` | Stable source-path identities and original group JSON, program version and source URL |
 | History / intent | `course_attempts`, `planner_courses` | Separate writable views over one legacy storage table during compatibility; no dual-write copies |
-| Plan saving | `save_schedule`, active schedule state | One owner/term/mode active plan; transactional header/items and archiving; per-owner/term lock |
+| Plan saving | `save_schedule`, `archive_schedule`, active schedule state, `plan_slot` | Up to three active plans per owner/term/mode; transactional header/items and archiving; per-owner/term lock |
 | Transfer | `transfer_credits` | Owner-only self-reported recognized awards and optional canonical UW equivalent |
 | Account identity | `private.account_emails` | Atomic normalized email uniqueness; managed Supabase Auth indexes remain intact |
 | Collection | `ingestion.import_runs`, `ingestion.source_snapshots` | Non-exposed batch metadata, checksums and source payloads; failed apply metadata is saved locally for retry |
@@ -71,3 +71,9 @@ Requirement cards use concise leaf titles under a single program heading and sta
 Known course targets remain numeric even when ancillary conditions need verification. Course titles alone no longer trigger review; consecutive `or` alternatives occupy one slot. Unknown non-course rules retain their source conditions rather than an invented completion fraction. Automatic `Done` still requires all supported credit and condition checks, including overlap review.
 
 Successful DIG saves navigate directly to the saved term's Plans view. Choosing a future term defaults to Plans; explicit tab choices remain available. The saved-plan cache stores loading/error/plan states together, so a failed load is distinguishable from an absent plan. A successful save requires a returned database ID before populating that cache. Saving and reloading a Spring 2027 plan was verified against the shared database; this follow-up changes no database schema.
+
+## Three saved plans and section details
+
+Migration `20261123090900` adds `saved_schedules.plan_slot` (1–3), preserving existing plans in slot 1. A partial unique index allows up to three active plans per owner/term/mode. `save_schedule` appends into the lowest free planned slot and returns `PLANS_FULL:` when full. `archive_schedule` archives only the selected owner's plan; both functions serialize on the same owner/term advisory lock. No existing items are replaced. Plans are selected by ID in the URL and grouped in the Plans dropdown. The preview capacity dialog lets the user delete an existing plan before saving the new one.
+
+Preview blocks open a keyboard-accessible native dialog with exact saved meeting times and building names. Lecture/discussion type, room and instructor names are fetched on demand from UW's public enrollment package endpoint, matched to the stored bundle ID and meeting. The authenticated API validates the section against the catalog, constructs a fixed-host numeric-ID URL and caches public packages for 15 minutes. Missing or unavailable official details are reported explicitly. No room/type data is guessed or added to historical meeting rows.
